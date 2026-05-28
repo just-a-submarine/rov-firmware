@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>ROV 地面站</title>
+  <link rel="stylesheet" href="/leaflet.css">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <!-- 自動導航狀態（地圖區上方橫條）-->
+  <div id="nav-status" class="nav-bar">手動模式</div>
+
+  <!-- 影像區：手機直連 ROV，不經地面站 -->
+  <section class="video-wrap">
+    <img id="stream" src="http://192.168.4.100:80/stream"
+         alt="ROV 影像" onerror="onStreamError()">
+    <span id="stream-mode-badge" class="badge">● 純串流</span>
+    <div id="photo-toast" class="toast">📷 已拍照存檔</div>
+    <div id="conn-dot" class="conn-dot off" title="WebSocket 連線狀態"></div>
+  </section>
+
+  <!-- 遙測數據列 -->
+  <section class="telemetry">
+    <div class="tcell"><span class="tlabel">深度</span><span id="t-depth" class="tval">--</span><span class="tunit">m</span></div>
+    <div class="tcell"><span class="tlabel">電量</span><span id="t-bat" class="tval">--</span><span class="tunit">%</span></div>
+    <div class="tcell"><span class="tlabel">功率</span><span id="t-power" class="tval">--</span><span class="tunit">W</span></div>
+    <div class="tcell"><span class="tlabel">電流</span><span id="t-current" class="tval">--</span><span class="tunit">A</span></div>
+    <div class="tcell"><span class="tlabel">訊號</span><span id="t-rssi" class="tval">--</span><span class="tunit">dBm</span></div>
+    <div class="tcell wide"><span class="tlabel">座標</span><span id="t-latlng" class="tval small">--, --</span></div>
+    <div id="rssi-warning" class="rssi-warn"></div>
+  </section>
+
+  <!-- 地圖與航點 -->
+  <section class="map-section">
+    <div id="map"></div>
+    <div class="map-toolbar">
+      <button id="btn-upload" class="btn primary">上傳航點</button>
+      <button id="btn-clear" class="btn">清除</button>
+      <span id="wp-count" class="wp-count">航點 0</span>
+      <span id="wp-hint" class="wp-hint">點地圖新增航點（間距需 ≥ 5m）</span>
+    </div>
+  </section>
+
+  <script src="/leaflet.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
