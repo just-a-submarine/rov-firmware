@@ -19,8 +19,10 @@ static const uint8_t ROV_STA_MAC[6] = {0x14, 0xC1, 0x9F, 0x29, 0xE0, 0xB8};
 // 5–10Hz；超過 20Hz 會擠壓 ESP-NOW 無線電時間（doc/04 §四）
 #define TELEMETRY_PUSH_INTERVAL_MS  150   // ≈ 6.7Hz
 
-// ---- 手把 ----
+// ---- 手把（控制來源 = 手機 Gamepad API → WebSocket）----
 #define DEADZONE_RATIO  0.06f             // 死區（≈ 2000/32767）
+// WS 控制逾時（毫秒）：超過此時間沒收到手機控制封包 → 視為失聯，軸值歸零（中立）。
+#define GP_WS_TIMEOUT_MS  500
 
 // ---- 航點 ----
 #define MAX_WAYPOINTS   50

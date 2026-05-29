@@ -12,6 +12,8 @@ static uint8_t s_streamMode = 0;     // 0 純串流 / 1 串流+錄影
 static bool    s_rbLast     = false;
 static bool    s_lbLast     = false;
 static bool    s_yLast      = false;
+static bool    s_startLast  = false;
+static bool    s_estop      = false;     // 急停 latch：Start 邊緣觸發切換（再按一次解鎖）
 
 MotorPair computeDifferential(int lx, int ly) {
     // 1. 正規化至 [-1, 1]；Y 軸反向（搖桿前推 ly 為負 → 前進為正）
@@ -25,9 +27,10 @@ MotorPair computeDifferential(int lx, int ly) {
     // 3. 搖桿大小（速度命令），最大限制 1.0
     float r = fminf(hypotf(x, y), 1.0f);
 
-    // 4. 差速混合
-    float rawLeft  = y + x;
-    float rawRight = y - x;
+    // 4. 差速混合（轉向慣例：搖桿左推 x<0 → 左轉 → 右馬達出力 > 左馬達）
+    //    實機實測舊式 (y+x, y-x) 轉向相反，故對調 x 項。
+    float rawLeft  = y - x;
+    float rawRight = y + x;
 
     // 5. 歸一化：讓輸出峰值等於搖桿大小 r（保持速度比例正確）
     float peak = fmaxf(fabsf(rawLeft), fabsf(rawRight));
@@ -71,6 +74,13 @@ void readXboxAndSend() {
     if (btnY && !s_yLast) s_ledState = !s_ledState;
     s_yLast = btnY;
 
+    // Start 邊緣觸發：急停 toggle（按一次鎖定停車，再按一次解鎖恢復）
+    if (btnStart && !s_startLast) {
+        s_estop = !s_estop;
+        printf("[GS] emergencyStop %s\n", s_estop ? "LATCHED" : "released");
+    }
+    s_startLast = btnStart;
+
     // 右搖桿 Y → 深度（前推為負 → 映射為正，永遠有效）
     if (abs(ry) < 2000) ry = 0;
     int depth = map(ry, -32767, 32767, 1023, -1023);
@@ -83,10 +93,12 @@ void readXboxAndSend() {
     pkt.rightMotor    = mp.right;
     pkt.vertMotor     = depth;
     pkt.ledOn         = s_ledState;
-    pkt.emergencyStop = btnStart;
+    pkt.emergencyStop = s_estop;
     pkt.autoMode      = false;
     pkt.streamMode    = s_streamMode;
     pkt.takePhoto     = takePhoto;
     pkt.msgType       = MSG_CONTROL;
     sendControl(pkt);
 }
+
+bool controlEstopLatched() { return s_estop; }

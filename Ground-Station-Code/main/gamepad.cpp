@@ -1,64 +1,60 @@
 #include "gamepad.h"
+#include "config.h"
 #include <Arduino.h>
 #include <Bluepad32.h>
+#include <esp_coexist.h>
 
-// Bluepad32 搖桿軸範圍 -512..511；放大到文件用的 -32767..32767
-static inline int16_t scaleAxis(int v) {
-    long s = (long)v * 64;
-    if (s > 32767) s = 32767;
-    if (s < -32767) s = -32767;
-    return (int16_t)s;
+// =============================================================================
+//  控制來源 = 手機瀏覽器 Gamepad API → WebSocket → 地面站（gamepadSetRemote）。
+//
+//  Xbox 手把走 classic BT，連線中會餓死 Wi-Fi AP（實測：手把連線 → AP stations=0、
+//  潛水艇 -127、影像連不上）。故 GS 不再接受手把藍牙連線（保持閒置，閒置 BT 不影響
+//  Wi-Fi），手把改配對到「手機」。本檔保留 Bluepad32 初始化以維持既有 BTstack 入口
+//  （setup()/loop() 由其 run loop 驅動），但停用配對、清除舊綁定。
+// =============================================================================
+
+// ---- 遙控狀態（由 web_server 收 WS 控制封包後餵入）----
+static int16_t  s_lx = 0, s_ly = 0, s_ry = 0;
+static uint16_t s_btns  = 0;
+static uint32_t s_lastMs = 0;
+
+static inline bool ctrlFresh() {
+    return s_lastMs != 0 && (millis() - s_lastMs) < GP_WS_TIMEOUT_MS;
 }
 
-static ControllerPtr s_ctl = nullptr;
+void gamepadSetRemote(int16_t lx, int16_t ly, int16_t ry, uint16_t buttons) {
+    s_lx = lx; s_ly = ly; s_ry = ry; s_btns = buttons;
+    s_lastMs = millis();
+}
 
+// GS 不接受手把連線：任何連上的手把立即斷開（控制改走手機 WS）。
+static volatile bool s_btConn = false;
 static void onConnected(ControllerPtr c) {
-    if (s_ctl == nullptr) {
-        s_ctl = c;
-        ControllerProperties p = c->getProperties();
-        printf("[Gamepad] connected: %s VID=0x%04x PID=0x%04x\n",
-               c->getModelName().c_str(), p.vendor_id, p.product_id);
-    }
+    s_btConn = true;
+    c->disconnect();                            // 立刻踢掉，避免 BT 連線餓死 Wi-Fi AP
+    printf("[Gamepad] 拒絕手把藍牙連線並斷開（請改配對到手機）\n");
 }
+static void onDisconnected(ControllerPtr) { s_btConn = false; }
 
-static void onDisconnected(ControllerPtr c) {
-    if (s_ctl == c) {
-        s_ctl = nullptr;
-        printf("[Gamepad] disconnected\n");
-    }
-}
+bool btControllerConnected() { return s_btConn; }
 
 void setupGamepad() {
     BP32.setup(&onConnected, &onDisconnected);
     BP32.enableVirtualDevice(false);
-    // 不呼叫 forgetBluetoothKeys()：保留綁定，配對過後自動重連
-    printf("[Gamepad] Bluepad32 ready (手把進入配對模式，且關閉 PC 藍牙)\n");
+    BP32.forgetBluetoothKeys();                 // 清除與 GS 的舊綁定 → 手把改配對到手機
+    BP32.enableNewBluetoothConnections(false);  // 不接受手把連線（避免餓死 Wi-Fi AP）
+    esp_coex_preference_set(ESP_COEX_PREFER_WIFI);
+    printf("[Gamepad] 控制改由手機 WebSocket；GS 藍牙閒置不配對手把\n");
 }
 
 void pollGamepad() {
-    BP32.update();
+    BP32.update();   // 維持 BTstack 服務（無手把連線時等同 no-op）
 }
 
-bool gamepadConnected() {
-    return s_ctl != nullptr && s_ctl->isConnected();
-}
+bool gamepadConnected() { return ctrlFresh(); }
 
-// 文件慣例：右為正、前推為負。Bluepad32 axisY 上(前)為負，正好相符。
-int16_t gpAxisLX() { return s_ctl ? scaleAxis(s_ctl->axisX())  : 0; }
-int16_t gpAxisLY() { return s_ctl ? scaleAxis(s_ctl->axisY())  : 0; }
-int16_t gpAxisRY() { return s_ctl ? scaleAxis(s_ctl->axisRY()) : 0; }
+int16_t gpAxisLX() { return ctrlFresh() ? s_lx : 0; }
+int16_t gpAxisLY() { return ctrlFresh() ? s_ly : 0; }
+int16_t gpAxisRY() { return ctrlFresh() ? s_ry : 0; }
 
-bool gpButton(GpButton b) {
-    if (!s_ctl) return false;
-    switch (b) {
-        case GP_A:     return s_ctl->a();
-        case GP_B:     return s_ctl->b();
-        case GP_X:     return s_ctl->x();
-        case GP_Y:     return s_ctl->y();
-        case GP_LB:    return s_ctl->l1();
-        case GP_RB:    return s_ctl->r1();
-        case GP_START: return s_ctl->miscStart();
-        case GP_BACK:  return s_ctl->miscSelect();
-    }
-    return false;
-}
+bool gpButton(GpButton b) { return ctrlFresh() && ((s_btns >> (int)b) & 0x1u); }

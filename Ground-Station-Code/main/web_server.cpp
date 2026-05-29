@@ -1,5 +1,7 @@
 #include "web_server.h"
 #include "espnow_link.h"
+#include "control.h"
+#include "gamepad.h"
 #include "config.h"
 #include <Arduino.h>
 #include <LittleFS.h>
@@ -22,8 +24,19 @@ static void onWSEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
         printf("[WS] client #%u connected\n", client->id());
     } else if (type == WS_EVT_DISCONNECT) {
         printf("[WS] client #%u disconnected\n", client->id());
+    } else if (type == WS_EVT_DATA) {
+        // 手機端上行：手把控制 {"t":"c","lx":..,"ly":..,"ry":..,"b":bitmask}
+        AwsFrameInfo* info = (AwsFrameInfo*)arg;
+        if (!info->final || info->index != 0 || info->len != len) return;  // 只收單幀小封包
+        JsonDocument doc;
+        if (deserializeJson(doc, data, len)) return;                       // 解析失敗忽略
+        if (doc["t"] != "c") return;
+        int lx = doc["lx"] | 0, ly = doc["ly"] | 0, ry = doc["ry"] | 0;
+        uint16_t b = (uint16_t)(doc["b"] | 0);
+        gamepadSetRemote((int16_t)constrain(lx, -32767, 32767),
+                         (int16_t)constrain(ly, -32767, 32767),
+                         (int16_t)constrain(ry, -32767, 32767), b);
     }
-    // 手機端只接收遙測，不回傳資料，故不處理 WS_EVT_DATA
 }
 
 static void handleWaypointBody(AsyncWebServerRequest* req, uint8_t* data,
@@ -60,9 +73,11 @@ void setupWebServer() {
         printf("[FS] LittleFS mount failed\n");
     }
 
+    // no-cache：每次載入用 ETag 重新驗證（未變動回 304，仍省頻寬），
+    // 避免改版後手機載到舊快取（max-age 會卡住更新最長 10 分鐘）。
     server.serveStatic("/", LittleFS, "/www/")
           .setDefaultFile("index.html")
-          .setCacheControl("max-age=600");
+          .setCacheControl("no-cache");
 
     server.on("/api/waypoints", HTTP_POST,
         [](AsyncWebServerRequest* req) {},   // 完成回應在 body handler 內送出
@@ -90,6 +105,7 @@ void broadcastTelemetry(const TelemetryPacket& pkt) {
     doc["navWpIdx"]   = pkt.navWaypointIdx;
     doc["navDistM"]   = pkt.navDistanceM;
     doc["photoAck"]   = pkt.photoAck;
+    doc["estop"]      = controlEstopLatched();   // 地面站本機急停 latch 狀態
 
     String out;
     serializeJson(doc, out);

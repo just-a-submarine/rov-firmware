@@ -6,6 +6,9 @@
 //  初始化順序依 doc/04 §七。
 // =============================================================================
 #include <Arduino.h>
+#include <esp_wifi.h>
+#include <WiFi.h>
+#include "diag.h"
 #include "config.h"
 #include "packets.h"
 #include "net_wifi.h"
@@ -13,6 +16,36 @@
 #include "web_server.h"
 #include "gamepad.h"
 #include "control.h"
+
+// [診斷] GS→潛水艇 stream 探測：確認 ROV 的 MJPEG 端到端可達且有資料（排除相機問題）。
+// GS 是 AP、ROV 是其 STA，這條路徑必通；若手機(client)看不到但這裡通 → 是 AP client↔client 轉發問題。
+static void streamProbeTask(void*) {
+    for (;;) {
+        vTaskDelay(pdMS_TO_TICKS(8000));
+        wifi_sta_list_t sl = {}; esp_wifi_ap_get_sta_list(&sl);
+        if (sl.num == 0) { printf("[PROBE] 跳過（無關聯 STA）\n"); continue; }
+        WiFiClient c;
+        printf("[PROBE] 連線 192.168.4.100:80 /stream …\n");
+        if (!c.connect(IPAddress(192, 168, 4, 100), 80, 4000)) {
+            printf("[PROBE] connect 失敗（GS 連不到 ROV stream）\n");
+            continue;
+        }
+        c.print("GET /stream HTTP/1.1\r\nHost: 192.168.4.100\r\nConnection: close\r\n\r\n");
+        uint32_t t0 = millis(); int total = 0, li = 0; char line[160]; bool gotStatus = false;
+        while (c.connected() && millis() - t0 < 4000 && total < 6000) {
+            while (c.available()) {
+                int ch = c.read(); total++;
+                if (!gotStatus) {
+                    if (ch == '\n') { line[li] = 0; printf("[PROBE] 狀態列: %s\n", line); gotStatus = true; }
+                    else if (li < 158 && ch != '\r') line[li++] = ch;
+                }
+            }
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        printf("[PROBE] 收到 %d bytes（>0＝ROV stream 可達且有影像資料）\n", total);
+        c.stop();
+    }
+}
 
 void setup() {
     // 不呼叫 Serial.begin()：它會重設 UART0、把 IDF console 接管掉，導致 printf 失效。
@@ -25,7 +58,8 @@ void setup() {
     printf("[GS] espnow done\n");
     setupWebServer();    // LittleFS + HTTP + WebSocket
     printf("[GS] web done\n");
-    setupGamepad();      // Xbox 手把（藍牙 Bluepad32）
+    setupGamepad();      // 控制改由手機 WS；GS 藍牙閒置
+    xTaskCreate(streamProbeTask, "probe", 4096, nullptr, 1, nullptr);  // [診斷] GS→ROV stream 探測
     printf("[GS] >>> setup() done, ready.\n");
 }
 
@@ -52,6 +86,27 @@ void loop() {
         lastPushMs = now;
         broadcastTelemetry(telemCache);
     }
+
+#if defined(GS_DIAG_STA) && GS_DIAG_STA
+    // [診斷] 每 3 秒印出已關聯的 AP 客戶端數 + 是否收到 ROV 遙測
+    static uint32_t lastStaMs = 0;
+    if (now - lastStaMs >= 3000) {
+        lastStaMs = now;
+        wifi_sta_list_t sl = {};
+        esp_wifi_ap_get_sta_list(&sl);
+        printf("[DIAG] AP stations=%d  haveTelem=%d  wsCtrl=%d  btGamepad=%d\n",
+               sl.num, (int)haveTelem, (int)gamepadConnected(), (int)btControllerConnected());
+        for (int i = 0; i < sl.num; i++) {
+            const uint8_t* m = sl.sta[i].mac;
+            printf("       sta%d %02X:%02X:%02X:%02X:%02X:%02X rssi=%d (GS聽ROV)\n",
+                   i, m[0], m[1], m[2], m[3], m[4], m[5], sl.sta[i].rssi);
+        }
+        // 潛水艇自量(ROV 聽 GS)的 RSSI + 電量/電流（天線/電量診斷）
+        printf("       ROV自量: rssi=%d dBm  bat=%d%%  cur=%.2fA  depth=%.2fm  cam(影格/-1停用)=%.0f\n",
+               (int)telemCache.rssi, telemCache.batPct, telemCache.currentA, telemCache.depthM,
+               telemCache.navDistanceM);
+    }
+#endif
 
     delay(1);  // 讓出 CPU 給 Wi-Fi / 藍牙協議堆疊
 }
