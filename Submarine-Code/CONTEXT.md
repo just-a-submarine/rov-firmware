@@ -75,6 +75,42 @@
 （SSID `ROV_TEST`）。手機連上後瀏覽器開 `http://<rov-ip>/stream` 看即時影像、
 序列觀察感測器數值。正式運行請關閉此旗標（純 STA 連地面站）。
 
+## 操控 / 感測修正（2026-05-29，依手機實測回饋）
+- **左馬達反槳**：`config.h LEFT_MOTOR_INVERT=1`，於 `motors.cpp setLeftMotor()` 反向電氣命令，
+  使「正命令＝與右馬達同向推力」。同時涵蓋手動差速與自動導航（都走 setLeftMotor）。改正槳設 0。
+- **急停可恢復**：`emergencyStop()` 會拉低 MCP 的 EN 腳；舊版解除後不再 `enableMotors()`，
+  導致按一次急停後馬達永久不動。`control.cpp applyControl()` 改為偵測 estop→正常的轉換時
+  重新 `enableMotors()`。地面站側 Start 改 toggle（再按一次解鎖）。
+- **電量估算（3S 18650）**：改掉線性內插（會隨油門忽上忽下）。`sensors.cpp`：
+  ① 內阻補償 `OCV≈V_bus+|I|×R_int`（`BATTERY_IR_OHM`）抵銷負載壓降；
+  ② 由「單顆 OCV」查 18650 放電曲線 `kCellCurve` 換算 SoC（非線性，比線性準）；
+  ③ 顯示值「立即下降、僅 `BATTERY_RISE_PCT_S`/s 緩升」防彈跳。
+  電壓來源：INA260 `readBusVoltage()`（電流計即可量匯流排電壓）。
+  功率：INA260 `readPower()` 暫存器（實測 V×I），非假設 12V。
+- **STA 發射功率**：`comms.cpp` 加 `esp_wifi_set_max_tx_power(84)`（~20dBm）改善弱訊號。
+- **WiFi 斷線自癒 watchdog**：`comms.cpp wifiReconnectWatchdog()`（networkTask 每圈呼叫）——
+  STA 被 deauth/干擾後會卡死不自動重連（實測：地面站手把那波 deauth 後 ROV 一直 -127、需重置才好）。
+  未關聯時每 5s `WiFi.disconnect()+begin()` 自動恢復。水下不能重置，此為必要。
+- **✅ 相機「沒畫面」真因＝偶發開機壞狀態（已修，2026-05-30）**：先前誤判為硬體故障，實為韌體可修。
+  - 相機**完全正常**：乾淨開機可連續穩定輸出 ~11fps 有效 JPEG（`[CAM] ok=23 seq 持續推進 lastLen≈21KB`，45s 不掉）。
+  - 真因：**OV5640 偶發開機進壞狀態 → 整次開機零影格**（同一韌體，`pio upload` 那次重置死、`esptool hard_reset` 那次活）。
+    根因是本板 **CAM_PIN_PWDN/RESET 都 = -1（未接）**，驅動無法硬體重置感測器，偶發卡死回不來。
+    先前每次剛好都讀到「死掉的那次開機」（uptime 35–43s 全 `null`），才誤判成硬體/資料線無訊號。
+  - **腳位確認 100% 正確**（對照 GOOUUU 實板 pinout 圖逐一比對）：XCLK15/SIOD4/SIOC5/VSYNC6/HREF7/PCLK13，
+    D0..D7 = Y2..Y9 = GPIO 11,9,8,10,12,18,17,16。**非腳位問題**。
+  - **修法（camera_stream.cpp）**：`streamTask` 開頭做**開機自癒**——抓不到第一幀就 `reinitCamera()`（deinit+init）重試最多 4 次；
+    執行期 `active` 中 seq 連續 ~4s 沒推進也 `reinitCamera()`（水下不能重開機，必要）。設定存於 `g_camConfig` 供重初始化。
+  - XCLK 降至 **10MHz**（`config.h`）：~11fps 穩定、訊號餘裕較大；20/24MHz 之前的「失敗」其實是讀到死開機，非頻率問題。
+  - **端到端已驗證**：GS→ROV `:80/stream` 探測 `HTTP/1.1 200 OK` + **收到 195397 bytes** 真實影像資料。
+  - 診斷工具（已留）：`WIFI_DIAG` 下 streamTask 每 2s 印 `[CAM] ok/null/big/seq`；
+    遙測借 `navDistanceM` 回傳影格數（手動模式），GS COM4 DIAG 印 `cam(影格/-1停用)`。
+- **天線診斷**：`WIFI_DIAG`（config.h，預設 1）每 2s 印 STA 狀態/RSSI/通道/IP/TX。
+- **相機 XCLK LEDC**：改用 `LEDC_CHANNEL_7/TIMER_3`，避開馬達 `ledcAttach` 佔用的 ch0–5（原本相機用 ch0 與左馬達衝突）。
+  ⚠ 原生 USB(COM6) `pio upload` 後常卡下載模式靜默 → 改從 GS COM4 看 ROV 自量 RSSI 較可靠
+  （或 `python -m esptool --port COM6 --after hard_reset run` 讓它跑）。
+  「訊號」遙測＝潛水艇 STA 看 GS AP 的 `WiFi.RSSI()`；`-127`＝當下未關聯（ESP-NOW 免關聯仍通）。
+  弱訊號根因疑為板上「板載/IPEX 天線二選一」0Ω 電阻未切對 → 待實機檢查。
+
 ## 驗證進度
 - [x] 編譯通過（core 3.x / pioarduino），正式版 + 單機版
 - [x] 實機燒錄、開機完整跑完不崩潰（COM3）
@@ -82,7 +118,8 @@
 - [x] SD 掛載成功、相機 init + MJPEG server 啟動成功
 - [x] 單機模式 SoftAP `ROV_TEST` @192.168.4.1 啟動
 - [x] 單機模式 HTTP server 實測：手機連 AP 後 `/` 與 `/stream` 請求均到達並回應（韌體層 OK）
-- [ ] 相機影像人工目視確認（手機畫面）
+- [x] 相機影像鏈路端到端驗證（2026-05-30）：相機 ~11fps 穩定、GS→ROV `:80/stream` 收到 195397 bytes；加開機/執行期自癒
+- [ ] 相機影像人工目視確認（手機實際畫面）——韌體已通，待手機目視
 - [x] GPS 版（UART1@43/44）燒錄開機正常、無崩潰循環
 - [ ] GPS 實測：接模組 + 天空視野取得定位，遙測帶出 lat/lng（需原生 USB 偵錯）
 - [ ] 馬達（離水、低工率）與緊急停車
