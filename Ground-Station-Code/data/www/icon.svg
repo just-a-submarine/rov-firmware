@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- 滿版底色：maskable 安全區，內容置中於 80% 內 -->
+  <rect width="512" height="512" fill="#0d1117"/>
+  <g fill="none" stroke="#2ea043" stroke-width="20" stroke-linecap="round" stroke-linejoin="round">
+    <!-- 艇身 -->
+    <rect x="120" y="206" width="230" height="100" rx="50" fill="#161b22"/>
+    <!-- 指揮塔 -->
+    <path d="M210 206 v-44 a18 18 0 0 1 18-18 h44 a18 18 0 0 1 18 18 v44" fill="#161b22"/>
+    <!-- 潛望鏡 -->
+    <path d="M250 144 v-34 h34"/>
+    <!-- 螺旋槳 -->
+    <path d="M350 256 h44 M372 226 v60"/>
+    <!-- 舷窗 -->
+    <circle cx="180" cy="256" r="16" fill="#2ea043" stroke="none"/>
+    <circle cx="248" cy="256" r="16" fill="#2ea043" stroke="none"/>
+  </g>
+</svg>

@@ -2,47 +2,82 @@
 <html lang="zh-Hant">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>ROV 地面站</title>
-  <link rel="stylesheet" href="/leaflet.css">
+
+  <!-- PWA：加到桌面後以 App 形式（standalone）啟動 -->
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#05080f">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="ROV">
+  <link rel="apple-touch-icon" href="/icon.svg">
+
+  <!-- Leaflet 改延遲載入（只在開「航點」分頁時抓），不擋首屏 -->
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <!-- 自動導航狀態（地圖區上方橫條）-->
-  <div id="nav-status" class="nav-bar">手動模式</div>
+  <!-- 頂列 HUD：連線指示 + 模式 + 全螢幕 -->
+  <header class="hud-top">
+    <div class="dots">
+      <span id="dot-ws"  class="dot" title="地面站連線">GS</span>
+      <span id="dot-gp"  class="dot" title="手把">PAD</span>
+      <span id="dot-cam" class="dot" title="影像串流">CAM</span>
+    </div>
+    <div id="nav-text" class="mode">手動模式</div>
+    <button id="btn-fs" class="fs-btn" title="全螢幕" aria-label="全螢幕">⛶</button>
+  </header>
 
-  <!-- 影像區：手機直連 ROV，不經地面站 -->
-  <section class="video-wrap">
-    <img id="stream" src="http://192.168.4.100:80/stream"
-         alt="ROV 影像" onerror="onStreamError()">
-    <span id="stream-mode-badge" class="badge">● 純串流</span>
-    <div id="photo-toast" class="toast">📷 已拍照存檔</div>
-    <div id="conn-dot" class="conn-dot off" title="WebSocket 連線狀態"></div>
-  </section>
+  <!-- 急停橫幅 -->
+  <div id="estop-banner" class="estop-banner">⛔ 緊急停止中　按手把 Start 解鎖</div>
 
-  <!-- 遙測數據列 -->
+  <!-- 遙測 HUD（常駐狀態監控）-->
   <section class="telemetry">
-    <div class="tcell"><span class="tlabel">深度</span><span id="t-depth" class="tval">--</span><span class="tunit">m</span></div>
-    <div class="tcell"><span class="tlabel">電量</span><span id="t-bat" class="tval">--</span><span class="tunit">%</span></div>
-    <div class="tcell"><span class="tlabel">功率</span><span id="t-power" class="tval">--</span><span class="tunit">W</span></div>
+    <div class="tcell"><span class="tlabel">深度</span><span id="t-depth"   class="tval">--</span><span class="tunit">m</span></div>
+    <div class="tcell"><span class="tlabel">電量</span><span id="t-bat"     class="tval">--</span><span class="tunit">%</span></div>
+    <div class="tcell"><span class="tlabel">功率</span><span id="t-power"   class="tval">--</span><span class="tunit">W</span></div>
     <div class="tcell"><span class="tlabel">電流</span><span id="t-current" class="tval">--</span><span class="tunit">A</span></div>
-    <div class="tcell"><span class="tlabel">訊號</span><span id="t-rssi" class="tval">--</span><span class="tunit">dBm</span></div>
+    <div class="tcell"><span class="tlabel">訊號</span><span id="t-rssi"    class="tval">--</span><span class="tunit">dBm</span></div>
     <div class="tcell wide"><span class="tlabel">座標</span><span id="t-latlng" class="tval small">--, --</span></div>
     <div id="rssi-warning" class="rssi-warn"></div>
   </section>
 
-  <!-- 地圖與航點 -->
-  <section class="map-section">
-    <div id="map"></div>
-    <div class="map-toolbar">
-      <button id="btn-upload" class="btn primary">上傳航點</button>
-      <button id="btn-clear" class="btn">清除</button>
-      <span id="wp-count" class="wp-count">航點 0</span>
-      <span id="wp-hint" class="wp-hint">點地圖新增航點（間距需 ≥ 5m）</span>
-    </div>
-  </section>
+  <!-- 分頁切換 -->
+  <nav class="tabs" role="tablist">
+    <button class="tab active" data-tab="video" role="tab">📹 影像</button>
+    <button class="tab"        data-tab="map"   role="tab">🗺 航點</button>
+  </nav>
 
-  <script src="/leaflet.js"></script>
+  <!-- 內容區 -->
+  <main class="content">
+    <!-- 影像頁 -->
+    <section id="pane-video" class="pane active">
+      <div class="video-wrap">
+        <!-- src 由 app.js initStream() 設定：MJPEG 串流是無限連線，放在 HTML 會卡住 window.load -->
+        <img id="stream" alt="">
+        <div id="stream-ph" class="stream-ph">📡 影像連線中…</div>
+        <span id="stream-mode-badge" class="badge">● 純串流</span>
+        <span class="corner tl"></span><span class="corner tr"></span>
+        <span class="corner bl"></span><span class="corner br"></span>
+      </div>
+    </section>
+
+    <!-- 地圖 / 航點頁 -->
+    <section id="pane-map" class="pane">
+      <div id="map"></div>
+      <div class="map-toolbar">
+        <button id="btn-upload" class="btn primary">上傳航點</button>
+        <button id="btn-clear" class="btn">清除</button>
+        <span id="wp-count" class="wp-count">航點 0</span>
+        <span id="wp-hint" class="wp-hint">點地圖新增航點（間距需 ≥ 5m）</span>
+      </div>
+    </section>
+  </main>
+
+  <div id="photo-toast" class="toast">📷 已拍照存檔</div>
+
   <script src="/app.js"></script>
 </body>
 </html>
