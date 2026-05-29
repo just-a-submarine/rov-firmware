@@ -27,6 +27,10 @@
       <span id="dot-cam" class="dot" title="影像串流">CAM</span>
     </div>
     <div id="nav-text" class="mode">手動模式</div>
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="video" role="tab">📹 影像</button>
+      <button class="tab"        data-tab="map"   role="tab">🗺 航點</button>
+    </nav>
     <button id="btn-fs" class="fs-btn" title="全螢幕" aria-label="全螢幕">⛶</button>
   </header>
 
@@ -35,20 +39,15 @@
 
   <!-- 遙測 HUD（常駐狀態監控）-->
   <section class="telemetry">
-    <div class="tcell"><span class="tlabel">深度</span><span id="t-depth"   class="tval">--</span><span class="tunit">m</span></div>
     <div class="tcell"><span class="tlabel">電量</span><span id="t-bat"     class="tval">--</span><span class="tunit">%</span></div>
     <div class="tcell"><span class="tlabel">功率</span><span id="t-power"   class="tval">--</span><span class="tunit">W</span></div>
     <div class="tcell"><span class="tlabel">電流</span><span id="t-current" class="tval">--</span><span class="tunit">A</span></div>
     <div class="tcell"><span class="tlabel">訊號</span><span id="t-rssi"    class="tval">--</span><span class="tunit">dBm</span></div>
+    <div class="tcell"><span class="tlabel">深度</span><span id="t-depth"   class="tval">--</span><span class="tunit">m</span></div>
     <div class="tcell wide"><span class="tlabel">座標</span><span id="t-latlng" class="tval small">--, --</span></div>
+    <div class="tcell led"><span class="tlabel">燈</span><span id="t-led" class="tval small">--</span></div>
     <div id="rssi-warning" class="rssi-warn"></div>
   </section>
-
-  <!-- 分頁切換 -->
-  <nav class="tabs" role="tablist">
-    <button class="tab active" data-tab="video" role="tab">📹 影像</button>
-    <button class="tab"        data-tab="map"   role="tab">🗺 航點</button>
-  </nav>
 
   <!-- 內容區 -->
   <main class="content">
@@ -56,9 +55,10 @@
     <section id="pane-video" class="pane active">
       <div class="video-wrap">
         <!-- src 由 app.js initStream() 設定：MJPEG 串流是無限連線，放在 HTML 會卡住 window.load -->
-        <img id="stream" alt="">
+        <img id="stream" class="fit-contain" alt="">
         <div id="stream-ph" class="stream-ph">📡 影像連線中…</div>
         <span id="stream-mode-badge" class="badge">● 純串流</span>
+        <button id="btn-fit" class="fit-btn" title="顯示比例">符合</button>
         <span class="corner tl"></span><span class="corner tr"></span>
         <span class="corner bl"></span><span class="corner br"></span>
       </div>

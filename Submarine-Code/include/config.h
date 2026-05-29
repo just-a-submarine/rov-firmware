@@ -90,6 +90,11 @@ static const uint8_t GS_AP_MAC[6] = {0x14, 0xC1, 0x9F, 0x29, 0xEA, 0xAD};  // �
 // 仍無畫面＝模組/排線實體斷路（需重插或換模組）。
 #define CAM_XCLK_FREQ    10000000
 
+// 相機畫面方向（模組實裝方向修正）：1=翻轉、0=不翻。
+// 實機畫面上下顛倒 → VFLIP=1。若同時左右鏡像（文字反）再把 HFLIP 也設 1（＝整體旋轉 180°）。
+#define CAM_VFLIP        1
+#define CAM_HFLIP        0
+
 // --------------------- 導航 / 控制常數（doc/06） ---------------------
 #define WP_REACH_RADIUS_M   4.0f          // 航點到達半徑
 #define WP_MIN_SPACING_M    5.0f          // 最小航點間距（GPS 誤差限制）

@@ -109,6 +109,7 @@ void networkTask(void*) {
         if (snap.navWaypointIdx == NAV_IDX_NONE)
             pkt.navDistanceM = cameraStreamActive() ? (float)cameraFrameSeq() : -1.0f;
         pkt.photoAck       = cameraConsumePhotoAck();
+        pkt.ledOn          = ledIsOn();
         pkt.msgType        = MSG_TELEMETRY;
         sendTelemetry(pkt);
 

@@ -105,6 +105,7 @@ void broadcastTelemetry(const TelemetryPacket& pkt) {
     doc["navWpIdx"]   = pkt.navWaypointIdx;
     doc["navDistM"]   = pkt.navDistanceM;
     doc["photoAck"]   = pkt.photoAck;
+    doc["led"]        = pkt.ledOn;               // 潛水艇燈實際狀態（手機狀態列顯示）
     doc["estop"]      = controlEstopLatched();   // 地面站本機急停 latch 狀態
 
     String out;

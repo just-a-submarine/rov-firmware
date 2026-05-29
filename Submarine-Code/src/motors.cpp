@@ -6,6 +6,7 @@
 namespace {
 Adafruit_MCP23X17 mcp;
 bool g_mcpReady = false;
+bool g_ledOn    = false;     // 目前燈命令狀態（供遙測回傳「燈是否開啟」）
 
 const uint8_t kPwmPins[] = {
     PIN_LEFT_RPWM,  PIN_LEFT_LPWM,
@@ -68,6 +69,9 @@ void emergencyStop() {
 }
 
 void setLed(bool on) {
+    g_ledOn = on;
     if (!g_mcpReady) return;
     mcp.digitalWrite(MCP_RELAY_LED, on ? HIGH : LOW);
 }
+
+bool ledIsOn() { return g_ledOn; }

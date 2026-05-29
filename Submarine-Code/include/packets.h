@@ -30,6 +30,7 @@ struct __attribute__((packed)) TelemetryPacket {
     uint8_t navWaypointIdx;   // 自動導航目標航點索引（0xFF = 未導航）
     float   navDistanceM;     // 距目標航點距離（公尺）
     bool    photoAck;         // 拍照完成確認
+    bool    ledOn;            // 目前燈實際狀態（Y 鍵開或深度>5cm 自動開）
     uint8_t msgType;          // 3=遙測
 };
 

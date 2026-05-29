@@ -14,3 +14,4 @@ void enableMotors();         // setup() 最後才呼叫，拉高 GPA0～5（doc/
 void emergencyStop();        // 三馬達 PWM 歸零 + EN 斷開
 
 void setLed(bool on);        // 繼電器控制 12V LED（GPA6，高電位觸發）
+bool ledIsOn();              // 目前燈命令狀態（供遙測回傳）

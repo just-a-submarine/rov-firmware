@@ -62,6 +62,16 @@ function updateTelemetry(d) {
   setText('t-current', fmt(d.current, 2));
   setText('t-rssi',    (typeof d.rssi === 'number') ? d.rssi : '--');
   setText('t-latlng',  fmt(d.lat, 6) + ', ' + fmt(d.lng, 6));
+  updateLed(d.led);
+}
+
+// 燈狀態：開（琥珀亮）/ 關（灰）/ --（無遙測）
+function updateLed(on) {
+  const el = document.getElementById('t-led');
+  if (!el) return;
+  if (on === true)       { el.textContent = '開'; el.style.color = 'var(--amber)'; }
+  else if (on === false) { el.textContent = '關'; el.style.color = 'var(--muted)'; }
+  else                   { el.textContent = '--'; el.style.color = ''; }
 }
 
 function updateStreamModeBadge(mode) {
@@ -252,6 +262,31 @@ function initStream() {
   img.src = STREAM_SRC;   // 由 JS 啟動串流（避免無限連線的 <img> 卡住 window.load）
 }
 
+// ---------- 影像顯示比例（符合 / 填滿 / 拉伸，記憶於 localStorage）----------
+const FIT_MODES = [
+  { cls: 'fit-contain', label: '符合' },   // object-fit: contain（完整畫面，留黑邊）
+  { cls: 'fit-cover',   label: '填滿' },   // object-fit: cover（填滿畫面，裁切邊緣）
+  { cls: 'fit-fill',    label: '拉伸' },   // object-fit: fill（拉滿，會變形）
+];
+function initFit() {
+  const img = document.getElementById('stream');
+  const btn = document.getElementById('btn-fit');
+  if (!img || !btn) return;
+  let idx = parseInt(localStorage.getItem('fitMode') || '0', 10);
+  if (!(idx >= 0 && idx < FIT_MODES.length)) idx = 0;
+  const apply = () => {
+    img.classList.remove('fit-contain', 'fit-cover', 'fit-fill');
+    img.classList.add(FIT_MODES[idx].cls);
+    btn.textContent = FIT_MODES[idx].label;
+  };
+  apply();
+  btn.addEventListener('click', () => {
+    idx = (idx + 1) % FIT_MODES.length;
+    try { localStorage.setItem('fitMode', String(idx)); } catch (_) {}
+    apply();
+  });
+}
+
 // ---------- 全螢幕 ----------
 function initFullscreen() {
   const btn = document.getElementById('btn-fs');
@@ -299,6 +334,7 @@ function initGamepad() {
 function boot() {
   initTabs();          // 地圖改在首次開航點分頁時才載入（ensureMap）
   initStream();        // 在此才設定 <img>.src 啟動串流
+  initFit();           // 還原影像顯示比例偏好
   initFullscreen();
   initGamepad();
   connectWS();
