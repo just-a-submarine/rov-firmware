@@ -46,7 +46,13 @@ void setMotor(uint8_t rpwmPin, uint8_t lpwmPin, int speed) {
     }
 }
 
-void setLeftMotor(int speed)  { setMotor(PIN_LEFT_RPWM,  PIN_LEFT_LPWM,  speed); }
+// 左馬達反槳：電氣命令反向，使「正命令 = 與右馬達同向的推力」（config.h）。
+void setLeftMotor(int speed)  {
+#if LEFT_MOTOR_INVERT
+    speed = -speed;
+#endif
+    setMotor(PIN_LEFT_RPWM,  PIN_LEFT_LPWM,  speed);
+}
 void setRightMotor(int speed) { setMotor(PIN_RIGHT_RPWM, PIN_RIGHT_LPWM, speed); }
 void setVertMotor(int speed)  { setMotor(PIN_VERT_RPWM,  PIN_VERT_LPWM,  speed); }
 

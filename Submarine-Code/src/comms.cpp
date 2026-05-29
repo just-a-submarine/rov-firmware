@@ -121,6 +121,7 @@ bool setupComms() {
     WiFi.config(IPAddress(ROV_IP), IPAddress(ROV_GATEWAY), IPAddress(ROV_SUBNET));
     WiFi.begin(AP_SSID, AP_PASS);
     esp_wifi_set_ps(WIFI_PS_NONE);     // 關省電防漏包（doc/04）
+    esp_wifi_set_max_tx_power(84);     // 最大發射功率（~20dBm，單位 0.25dBm）改善弱訊號
 
     log_i("ROV STA MAC: %s（填入地面站 peer_addr）", WiFi.macAddress().c_str());
 
@@ -147,6 +148,35 @@ int8_t currentRssi() {
     return 0;
 #else
     return (WiFi.status() == WL_CONNECTED) ? (int8_t)WiFi.RSSI() : -127;
+#endif
+}
+
+void wifiReconnectWatchdog() {
+#ifndef STANDALONE_TEST
+    // STA 被 deauth/干擾後可能卡住不自動重連；未關聯時每 5s 重發 begin() 自癒。
+    static uint32_t lastTry = 0;
+    if (WiFi.status() == WL_CONNECTED) return;
+    if (millis() - lastTry < 5000) return;
+    lastTry = millis();
+    WiFi.disconnect();
+    WiFi.begin(AP_SSID, AP_PASS);
+    log_w("[WiFi] STA 未關聯，重連 %s …", AP_SSID);
+#endif
+}
+
+void logWifiDiag() {
+#if defined(WIFI_DIAG) && WIFI_DIAG && !defined(STANDALONE_TEST)
+    static uint32_t last = 0;
+    if (millis() - last < 2000) return;
+    last = millis();
+    wl_status_t st = WiFi.status();
+    int8_t txp = 0;
+    esp_wifi_get_max_tx_power(&txp);
+    // 兩板靠近(~20cm)時 rssi 仍 < -65 → 高度懷疑天線(0Ω 切換)不良。
+    log_i("[WiFiDiag] status=%d(%s) rssi=%d dBm ch=%d ip=%s txpwr=%d(x0.25dBm)",
+          (int)st, (st == WL_CONNECTED ? "CONNECTED" : "NOT_CONN"),
+          (int)WiFi.RSSI(), WiFi.channel(),
+          WiFi.localIP().toString().c_str(), (int)txp);
 #endif
 }
 

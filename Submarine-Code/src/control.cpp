@@ -14,10 +14,17 @@ namespace {
 void applyControl(const ControlPacket& pkt, const TelemetrySnapshot& snap,
                   NavResult& navOut) {
     // 1. 緊急停車最高優先（doc/06 §八）
+    //    emergencyStop() 會拉低 MCP 的 EN 腳；解除時若不重新致能，馬達會永遠不動。
+    static bool wasEStop = false;
     if (pkt.emergencyStop) {
         emergencyStop();
+        wasEStop = true;
         navOut = NavResult();        // active=false, idx=NONE
         return;
+    }
+    if (wasEStop) {                  // 急停 → 正常：重新致能馬達 EN（再按一次 Start 解鎖）
+        enableMotors();
+        wasEStop = false;
     }
 
     // 2. 串流模式 / 拍照旗標轉交相機
@@ -81,8 +88,10 @@ void networkTask(void*) {
     TickType_t last = xTaskGetTickCount();
 
     for (;;) {
+        wifiReconnectWatchdog();                   // STA 斷線自癒（被 deauth/GS 重啟後重連）
         int8_t rssi = currentRssi();
         cameraSetRssi(rssi);                       // 供 streamTask 做 RSSI 降級
+        logWifiDiag();                             // 天線診斷（WIFI_DIAG，每 2s）
 
         TelemetrySnapshot snap = getTelemetry();
         TelemetryPacket pkt = {};
@@ -96,6 +105,9 @@ void networkTask(void*) {
         pkt.streamMode     = cameraGetStreamMode();
         pkt.navWaypointIdx = snap.navWaypointIdx;
         pkt.navDistanceM   = snap.navDistanceM;
+        // [診斷] 手動模式下借 navDistanceM 回傳相機狀態：-1=串流停用，否則=已發佈影格數
+        if (snap.navWaypointIdx == NAV_IDX_NONE)
+            pkt.navDistanceM = cameraStreamActive() ? (float)cameraFrameSeq() : -1.0f;
         pkt.photoAck       = cameraConsumePhotoAck();
         pkt.msgType        = MSG_TELEMETRY;
         sendTelemetry(pkt);

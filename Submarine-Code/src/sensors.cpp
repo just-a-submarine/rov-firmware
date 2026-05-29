@@ -27,11 +27,53 @@ bool g_inaOk     = false;
 float g_offsetX = 0.0f, g_offsetY = 0.0f;   // 硬鐵偏移
 float g_scaleX  = 1.0f, g_scaleY  = 1.0f;   // 軟鐵比例
 
-// 3S Li-ion 電量估算（依匯流排電壓線性內插）
-uint8_t estimateBatteryPct(float busVoltage) {
-    const float kFull = 12.6f, kEmpty = 9.0f;
-    float pct = (busVoltage - kEmpty) / (kFull - kEmpty) * 100.0f;
-    return (uint8_t)constrain((int)(pct + 0.5f), 0, 100);
+// 單顆 18650 開路電壓(OCV) → 剩餘電量(%) 查表。放電曲線非線性，相鄰點線性內插即可。
+// 數值取自典型 18650 靜置電壓對 SoC（中段平、兩端陡）。
+struct OcvSoc { float v; float pct; };
+const OcvSoc kCellCurve[] = {
+    {4.20f, 100.f}, {4.10f, 90.f}, {4.00f, 80.f}, {3.93f, 70.f}, {3.87f, 60.f},
+    {3.80f, 50.f},  {3.73f, 40.f}, {3.69f, 30.f}, {3.61f, 20.f}, {3.50f, 10.f},
+    {3.27f, 5.f},   {3.00f, 0.f},
+};
+
+float cellOcvToPct(float v) {
+    const int n = sizeof(kCellCurve) / sizeof(kCellCurve[0]);
+    if (v >= kCellCurve[0].v)     return 100.0f;
+    if (v <= kCellCurve[n - 1].v) return 0.0f;
+    for (int i = 1; i < n; i++) {
+        if (v >= kCellCurve[i].v) {
+            const OcvSoc& hi = kCellCurve[i - 1];
+            const OcvSoc& lo = kCellCurve[i];
+            float t = (v - lo.v) / (hi.v - lo.v);
+            return lo.pct + t * (hi.pct - lo.pct);
+        }
+    }
+    return 0.0f;
+}
+
+// 3S 18650 電量估算（doc/03 / config.h）。
+// 修正「動作時掉、放開彈回 100」的電壓垂降問題：
+//   1) 內阻補償：OCV ≈ V_bus + |I| × R_int，抵銷馬達負載造成的壓降。
+//   2) 由單顆 OCV 查放電曲線換算 SoC（比線性準）。
+//   3) 顯示值立即下降、僅能極慢回升，避免油門放開時回彈。
+uint8_t estimateBatteryPct(float busVoltage, float currentA) {
+    float ocvPack = busVoltage + fabsf(currentA) * BATTERY_IR_OHM;  // 回推開路電壓
+    float inst    = cellOcvToPct(ocvPack / BATTERY_CELLS);          // 每顆 OCV → SoC
+
+    static bool     init   = false;
+    static float    disp   = 100.0f;
+    static uint32_t lastMs = 0;
+    uint32_t now = millis();
+    if (!init) { init = true; disp = inst; lastMs = now; }
+
+    float dt = (now - lastMs) / 1000.0f;
+    lastMs = now;
+    if (inst < disp) {                                  // 立即下降（反映真實耗電）
+        disp = inst;
+    } else {                                            // 僅能緩慢回升（防彈跳）
+        disp += fminf(inst - disp, BATTERY_RISE_PCT_S * dt);
+    }
+    return (uint8_t)constrain((int)(disp + 0.5f), 0, 100);
 }
 }  // namespace
 
@@ -107,8 +149,8 @@ void readAllSensors(TelemetrySnapshot& snap) {
 
     if (g_inaOk) {
         snap.currentA = ina260.readCurrent() / 1000.0f;     // mA → A
-        snap.powerW   = ina260.readPower()   / 1000.0f;     // mW → W
-        snap.batPct   = estimateBatteryPct(ina260.readBusVoltage() / 1000.0f);  // mV → V
+        snap.powerW   = ina260.readPower()   / 1000.0f;     // mW → W（INA260 內建 power 暫存器，實測 V×I）
+        snap.batPct   = estimateBatteryPct(ina260.readBusVoltage() / 1000.0f, snap.currentA);  // mV → V
     }
 
     snap.gpsValid = gps.location.isValid();

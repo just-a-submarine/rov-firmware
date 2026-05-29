@@ -37,6 +37,10 @@ static const uint8_t GS_AP_MAC[6] = {0x14, 0xC1, 0x9F, 0x29, 0xEA, 0xAD};  // �
 #define PIN_VERT_RPWM   41                // 垂直馬達（doc/06 §六的 44/46 為筆誤，正確為 41/42）
 #define PIN_VERT_LPWM   42
 
+// 左馬達裝「反槳」：要產生與右馬達相同方向的推力，電氣命令需反向。
+// 1 = 反向（前進時左馬達自動反轉，修正左右推進方向不一致）。改裝正槳則設 0。
+#define LEFT_MOTOR_INVERT   1
+
 // --------------------- MCP23017 輸出腳（GPA0～GPA6，數位 EN / 繼電器） ---------------------
 #define MCP_LEFT_R_EN   0                 // GPA0
 #define MCP_LEFT_L_EN   1                 // GPA1
@@ -81,7 +85,10 @@ static const uint8_t GS_AP_MAC[6] = {0x14, 0xC1, 0x9F, 0x29, 0xEA, 0xAD};  // �
 #define CAM_PIN_PCLK     13
 #define CAM_PIN_PWDN     -1
 #define CAM_PIN_RESET    -1
-#define CAM_XCLK_FREQ    20000000
+// XCLK：20/24MHz 皆無影格。降到 10MHz 排查「排線接觸不良/訊號完整性」——
+// 邊緣接觸的 FPC 在高速 PCLK 下會掉幀，降頻若能出畫面＝接觸不良（可重插改善）；
+// 仍無畫面＝模組/排線實體斷路（需重插或換模組）。
+#define CAM_XCLK_FREQ    10000000
 
 // --------------------- 導航 / 控制常數（doc/06） ---------------------
 #define WP_REACH_RADIUS_M   4.0f          // 航點到達半徑
@@ -94,6 +101,20 @@ static const uint8_t GS_AP_MAC[6] = {0x14, 0xC1, 0x9F, 0x29, 0xEA, 0xAD};  // �
 #define DEPTH_KI            0.5f
 #define DEPTH_KD            0.1f
 #define DEPTH_SAMPLE_US     100000         // 100ms = 10Hz
+
+// --------------------- 電量估算（3 串 18650，doc/03） ---------------------
+// 18650 滿電 4.2V / 截止 ~3.0V，但放電曲線非線性（中段 ~3.7V 很平、兩端陡）。
+// 故不用線性，改以「單顆 OCV → SoC」查表內插（sensors.cpp kCellCurve）。
+// 另加兩道修正解決實測問題：
+//   1) 內阻補償：OCV ≈ V_bus + |I|×R_int，抵銷馬達負載壓降（修「動作就掉」）。
+//   2) 顯示值立即下降、僅能極慢回升（修「放開油門彈回 100%」）。
+#define BATTERY_CELLS       3       // 串聯顆數（3S）
+#define BATTERY_IR_OHM      0.15f   // 電池+線路等效內阻（粗估；實測 ΔV/ΔI 可校正）
+#define BATTERY_RISE_PCT_S  0.2f    // 顯示電量每秒最多回升（防彈跳；換電池後緩慢校正）
+
+// --------------------- 診斷 ---------------------
+// 每 2s 由 networkTask 印 STA 狀態/RSSI/通道/IP/TX 功率（天線/弱訊號診斷）。確認後可設 0。
+#define WIFI_DIAG       1
 
 // --------------------- 任務頻率 ---------------------
 #define CONTROL_HZ          100

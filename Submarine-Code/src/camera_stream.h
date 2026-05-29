@@ -11,3 +11,5 @@ uint8_t cameraGetStreamMode();
 void    cameraRequestPhoto();        // 觸發單張 720p 拍照（模式 0 才有效）
 bool    cameraConsumePhotoAck();     // 取出並清除拍照完成旗標（遙測用）
 void    cameraSetRssi(int8_t rssi);  // 提供 RSSI 給 streamTask 做動態降級
+uint32_t cameraFrameSeq();           // 已發佈影格序號（診斷：是否有產生影格）
+bool     cameraStreamActive();       // 串流是否啟用（診斷）
