@@ -124,6 +124,26 @@ WebSocket 指數退避重連、tile 載入失敗降級灰網格。
   手把配對到「手機」（非 GS）。位元：bit0=A..3=Y,4=LB,5=RB,6=Start,7=Back。
 - **手機地圖修復**：Leaflet 在隱藏分頁初始化會空白；切到航點頁時 `map.invalidateSize()`（resize 亦然）。
 
+**橫向版面 + 影像比例（2026-05-30，使用者主要橫拿）**：
+- **橫向 HUD 壓縮（不蓋影像）**（`style.css` `@media (orientation:landscape) and (max-height:600px)`）：
+  ⚠ 初版用「fixed 半透明浮層 + 左側垂直軌」實測會**蓋住影像與「純串流」徽章**、座標被擠掉 → 已改掉。
+  現行＝HUD 維持**正常排版只壓低高度**（不浮層、不蓋影像）；遙測壓成**單列**
+  （`grid-template-columns: repeat(5,1fr) 1.6fr`，座標格較寬、字級縮小 → 6 位小數座標塞得下），`rssi-warn` 隱藏；
+  **分頁用 `order:1` 移到畫面底部置中**（拇指好按、不佔側邊）。直向不受影響（媒體查詢未命中）。
+  已用 headless Chrome 820×380 / 390×820 + 注入假遙測截圖驗證（badge 可見、座標完整、分頁在底）。
+- **影像顯示比例可切換**（`#btn-fit`，右下角）：循環 `符合`(contain) → `填滿`(cover) → `拉伸`(fill)，
+  改 `<img>` 的 `fit-*` class 切 `object-fit`，偏好存 `localStorage.fitMode`。來源 4:3（SVGA），預設 `符合`。
+
+**狀態列重排 + 燈號 + 分頁移頂列（2026-05-30，依回饋）**：
+- **分頁移到頂列 HUD「手動模式」右側**（不再獨佔一列、也非側軌）：`<nav class="tabs">` 移進 `<header class="hud-top">`，
+  改**分段控制**樣式（圓角小鈕）；`.mode` 加 `min-width:0`+ellipsis 讓出空間；`.hud-top { flex-wrap:wrap }` 安全換行。
+- **遙測改 flex-wrap 並重排順序**：電量→功率→電流→訊號→深度→座標→燈（DOM 順序即顯示順序）。
+  橫向 `flex-wrap:nowrap` 壓成單列：`.tcell.wide`(座標)`flex:2`、`.tcell.led`(燈)`flex:.55`，字級縮小讓座標完整不截斷。
+- **燈號**：新增 `燈` 格（`#t-led`），讀遙測 `led`：開＝琥珀「開」、關＝灰「關」、無遙測＝`--`。
+  資料源＝潛水艇 `TelemetryPacket.ledOn`（packets.h 兩端同步加）→ `web_server.cpp` `doc["led"]`。
+- 已用 headless 820×380 / 390×820 + 注入假遙測截圖驗證（分頁在頂列、單列座標完整、燈 開 琥珀）。
+- ⚠ 改了 `packets.h`（加 `ledOn`）→ **GS 韌體與潛水艇都要重燒**（已燒）；前端另需 uploadfs。
+
 ## Wi-Fi/BLE 共存（2026-05-29 實測，關鍵）
 > 「手把走藍牙」與「Wi-Fi AP/ESP-NOW」同晶片共存其實**有衝突**，doc 初版「實測可共存」過於樂觀。
 - **ESP-NOW（連線無關、固定 ch1）完全不受影響**：全程 `haveTelem=1`，遙測穩定。

@@ -1,5 +1,23 @@
 # Lessons（踩坑與教訓）
 
+## 2026-05-30（五，第二批）— 相機壞狀態的真正極限 + 序列埠開埠會重置 S3
+
+### 🚨 sensor-wedge 需「實體斷電」；SoC reset（含開序列埠）救不回
+- **接續上面「相機開機自癒」**：實測發現軟體 `reinitCamera()`（deinit+init）對某些壞狀態**完全救不回**——
+  log 反覆 `gdma_disconnect: no peripheral connected` + `fb_get` block ~9s 回 null，連續多 boot 都壞。
+- **真因深一層**：PWDN/RESET 未接 → **任何 SoC 重置都不會把 OV5640 斷電**（`pio upload`、`esptool` reset、`esp_restart` 皆然）。
+  sensor 一旦卡死，軟重置/整機重開都沒用，**只有拔插電源完整斷電**才回復。
+- **🚨 開序列埠會 SoC-reset ESP32-S3 native USB CDC**：每次用 pyserial 開 COM6（DTR）都觸發 core 的 auto-reset，
+  uptime 從頭算。先前誤以為「板子自己重開/crash」其實是**我開埠造成的**。→ 用序列埠盯相機＝每次都重置又不斷電＝永遠看到壞的。
+  **教訓**：診斷 native-USB S3 的「是否自我重開」時，開埠本身就是干擾源；要看單一視窗內 uptime 是否連續，別跨多次開埠比較。
+- **設計決策**：**不要用 `esp_restart` 做相機自癒**——對 sensor-wedge 徒勞，還反覆中斷控制/遙測（水下尤其糟）。
+  改為**判死閒置**（`g_camDead`）：開機重試 3 次 / 執行期 reinit 3 次無效就放棄相機、streamTask 閒置，**控制與遙測續行**。
+  使用者修法＝實體斷電重開；治本＝把 PWDN/RESET 焊到空閒 GPIO。**「能自動修」不等於「該自動修」——權衡中斷成本。**
+
+### 兩個 pio 不要同時跑
+- 同時跑潛水艇（pioarduino）與地面站（ESP-IDF）的 `pio run` 會撞工具鏈環境（`operable program or batch file` / Error 1）。
+  → 序列化執行；不同 COM 埠也別圖快並行 build。
+
 ## 2026-05-30（五）— 相機「沒畫面」誤判成硬體（重大教訓）＋ 手機載入慢
 
 ### 相機：detected + fb_get timeout ≠ 硬體故障（我先前判斷錯）

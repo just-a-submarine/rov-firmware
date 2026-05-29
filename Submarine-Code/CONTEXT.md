@@ -98,10 +98,30 @@
     先前每次剛好都讀到「死掉的那次開機」（uptime 35–43s 全 `null`），才誤判成硬體/資料線無訊號。
   - **腳位確認 100% 正確**（對照 GOOUUU 實板 pinout 圖逐一比對）：XCLK15/SIOD4/SIOC5/VSYNC6/HREF7/PCLK13，
     D0..D7 = Y2..Y9 = GPIO 11,9,8,10,12,18,17,16。**非腳位問題**。
-  - **修法（camera_stream.cpp）**：`streamTask` 開頭做**開機自癒**——抓不到第一幀就 `reinitCamera()`（deinit+init）重試最多 4 次；
-    執行期 `active` 中 seq 連續 ~4s 沒推進也 `reinitCamera()`（水下不能重開機，必要）。設定存於 `g_camConfig` 供重初始化。
+  - **修法（camera_stream.cpp）**：`streamTask` 開頭**開機自癒**——抓不到第一幀就 `reinitCamera()`（deinit+init）重試 3 次；
+    執行期 `active` 中 seq 連續 ~4s 沒推進也 `reinitCamera()`（連 3 次無效則判死）。設定存於 `g_camConfig` 供重初始化。
   - XCLK 降至 **10MHz**（`config.h`）：~11fps 穩定、訊號餘裕較大；20/24MHz 之前的「失敗」其實是讀到死開機，非頻率問題。
   - **端到端已驗證**：GS→ROV `:80/stream` 探測 `HTTP/1.1 200 OK` + **收到 195397 bytes** 真實影像資料。
+- **🚨 相機壞狀態的真正極限＝需「實體斷電」才清得掉（2026-05-30 補充）**：
+  - 軟體 `reinitCamera()`（deinit+init）**救不回某些壞狀態**：log 反覆 `[CAM] gdma_disconnect: no peripheral connected` + `fb_get` block ~9s 回 null。
+  - 根因＝**PWDN/RESET 未接（-1）→ 任何 SoC 重置（含 `pio upload`、`esptool` reset、`esp_restart`）都不會把 sensor 斷電**，
+    所以 sensor 一旦卡死，軟重置/重開機都沒用，**只有拔插電源完整斷電**才會回復（先前能用 81 分鐘就是某次 power-on 抽到好狀態）。
+  - ⚠ **開序列埠監看會 SoC-reset 本板**（ESP32-S3 native USB CDC 開埠觸發 core auto-reset）→ 每次監看都重置、且不斷電，
+    所以「用序列埠盯相機」永遠看到壞的；先前誤以為「板子自己重開」其實是開埠造成。
+  - **決策：不要用 `esp_restart` 自癒**（對 sensor-wedge 徒勞，且反覆中斷控制）。改為**判死 → `g_camDead` 閒置**：
+    開機重試 3 次救不回（或執行期 reinit 3 次無效）就放棄相機、streamTask 閒置不再狂刷，**控制/遙測完全不受影響**。
+    已驗證：判死後無自我重開、WifiDiag 每 2s 照常 CONNECTED。**使用者修法：實體斷電重開潛水艇一次**。
+    **治本（硬體）**：把相機 FPC 的 PWDN 或 RESET 焊一條線到空閒 GPIO，填入 `CAM_PIN_PWDN/RESET`，驅動才能硬體重置 sensor。
+- **🔧 精確診斷：症狀指向 FPC 排線/模組接觸（2026-05-30 再補）**：COM6 即時 log＝`偵測到 sensor PID=0x5640`（SCCB/電源 OK）
+  但 `fb_get` block 8s 回 null + `gdma_disconnect`（D0–D7/PCLK/VSYNC/HREF 無資料、DMA 收不到像素）。`config.h:88-91` XCLK
+  已從 20/24MHz **降到 10MHz**，10MHz 下仍零影格 → 依該註解判斷邏輯＝**排線接觸不良／模組實體斷路**（非韌體）。
+  **第一優先：重插相機 FPC、壓緊連接器卡扣、確認金手指方向**；其次換排線/模組；單純斷電重開不一定穩定（間歇接觸）。
+- **串流判死立即收連線（2026-05-30）**：`streamHandler` 開頭 `if (g_camDead) httpd_resp_send_err(500)`、迴圈內 `if (g_camDead) break`
+  → 相機死時手機 `<img>` 觸發 error 顯示「影像中斷，重連中」並每 3s 重連，**不再永遠卡「影像連線中…」**；相機復原後自動接上。
+- **燈狀態進遙測（2026-05-30）**：`motors.cpp` 記錄 `setLed` 命令值、`ledIsOn()` 取出；`networkTask` 填 `TelemetryPacket.ledOn`
+  （兩端 packets.h 同步加），GS `web_server.cpp` 轉 JSON `led` → 手機狀態列「燈 開/關」。
+- **LB 即時拍照（2026-05-30）**：原 `takePhotoAndSave` 會切 720p+暫停串流+等 150ms（慢又頓）→ 改 **`takePhotoInstant`**：
+  直接把目前串流最新影格（SVGA）寫 SD，**零延遲、不中斷畫面**。GS 端 LB 已邊緣觸發（按一下一張）。
   - 診斷工具（已留）：`WIFI_DIAG` 下 streamTask 每 2s 印 `[CAM] ok/null/big/seq`；
     遙測借 `navDistanceM` 回傳影格數（手動模式），GS COM4 DIAG 印 `cam(影格/-1停用)`。
 - **天線診斷**：`WIFI_DIAG`（config.h，預設 1）每 2s 印 STA 狀態/RSSI/通道/IP/TX。
@@ -119,7 +139,14 @@
 - [x] 單機模式 SoftAP `ROV_TEST` @192.168.4.1 啟動
 - [x] 單機模式 HTTP server 實測：手機連 AP 後 `/` 與 `/stream` 請求均到達並回應（韌體層 OK）
 - [x] 相機影像鏈路端到端驗證（2026-05-30）：相機 ~11fps 穩定、GS→ROV `:80/stream` 收到 195397 bytes；加開機/執行期自癒
-- [ ] 相機影像人工目視確認（手機實際畫面）——韌體已通，待手機目視
+- [x] **相機實機目視 OK（2026-05-30）**：使用者重插 FPC 排線後手機有畫面（真因＝排線接觸，非韌體）。
+  畫面上下顛倒 → 加 `CAM_VFLIP=1`（config.h）+ `applyCamOrientation()`（setup/reinit 都套用），燒錄後 `ok=12 seq` 穩定推進。
+  ⚠ 若左右也鏡像（文字反）→ 改 `CAM_HFLIP=1`（＝整體 180°）。
+- [x] **LB 拍照 / RB 錄影鏈路查證（2026-05-30）**：兩端按鍵 bit 一致（LB=bit4/RB=bit5/Start=bit6）。
+  LB：邊緣觸發**僅 streamMode 0** → `takePhoto` → ROV `cameraRequestPhoto`→`takePhotoInstant` 寫 `/photo_*.jpg` → `photoAck`
+  回遙測 → 手機閃「已拍照」toast。RB：邊緣 toggle streamMode → ROV `startRecording`/`stopRecording` 寫 `/rec_*.avi`(MJPG AVI+idx1)；
+  badge 變紅本身即證明往返成功。SD 開機掛載成功（無「未就緒」警告）→ 兩者都實際寫檔。
+  ⚠ 注意：**錄影模式(RB 紅)下 LB 不會拍照**（拍照僅純串流模式）。
 - [x] GPS 版（UART1@43/44）燒錄開機正常、無崩潰循環
 - [ ] GPS 實測：接模組 + 天空視野取得定位，遙測帶出 lat/lng（需原生 USB 偵錯）
 - [ ] 馬達（離水、低工率）與緊急停車

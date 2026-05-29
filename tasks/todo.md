@@ -48,8 +48,30 @@
 - [x] gzip leaflet.js(147→42KB)/leaflet.css(14.8→3.5KB)；serveStatic `_tryGzipFirst` 預設 true 自動送 .gz
 - [x] uploadfs 已含新前端（gzip 在 uploadfs 之前產生）；app.js node --check 通過
 
+## ✅ 橫向版面 + 影像比例可調（2026-05-30，使用者橫拿主用）
+- [x] 影像比例切換鈕 `#btn-fit`：符合(contain)/填滿(cover)/拉伸(fill)，存 localStorage
+- [x] 橫向 v1（浮層+左側軌）→ 實測蓋住影像/「純串流」徽章、座標被擠掉，**已棄**
+- [x] 橫向 v2（採用）：HUD 維持正常排版只壓低高度（不蓋影像）；遙測單列、座標較寬格塞得下；
+      分頁 `order:1` 移到畫面底部置中（拇指好按、不佔側邊）
+- [x] headless Chrome 820×380 / 390×820 + 注入假遙測截圖驗證（badge 可見、座標完整、分頁在底）
+- [x] node --check app.js 通過；uploadfs COM4 ×2 成功（新前端已生效）
+
+## ✅ 第四輪：狀態列重排/燈號 + 即時拍照 + 相機自癒重新設計（2026-05-30）
+- [x] 遙測重排序：電量→功率→電流→訊號→深度→座標→燈（前端 flex-wrap）；橫向單列座標完整不截斷
+- [x] 狀態列加「燈」開/關：`TelemetryPacket.ledOn`（兩端 packets.h 同步）→ GS `doc["led"]` → 前端琥珀/灰
+- [x] LB 即時拍照：改 `takePhotoInstant`（存目前串流影格、不切 720p/不暫停）→ 零延遲；GS 端 LB 已邊緣觸發
+- [x] 分頁移到頂列「手動模式」右側（分段控制），不再佔底部/側邊
+- [x] 相機自癒**改設計**：撤掉 `esp_restart`（對 sensor-wedge 徒勞又中斷控制）→ 判死 `g_camDead` 閒置、保留控制
+- [x] 燒錄驗證：潛水艇 COM6 + GS 韌體 COM4 + uploadfs；headless 截圖驗證前端
+- [ ] **相機需使用者實體斷電重開潛水艇一次**（SoC reset 清不掉 sensor 壞狀態）；治本：PWDN/RESET 接 GPIO
+
+## 手把連線方式（已答覆，無需改碼）
+- 瀏覽器 Gamepad API 不分有線/藍牙；手把接「手機」或「電腦」皆可（含 USB 有線）。
+- 電腦走 Wi-Fi 連 ROV_GS、開 `http://192.168.4.1`、插手把按一鍵喚醒 → 與手機等效操控。
+  注意：電腦單網卡連 AP 會失網路 → 地圖 OSM 磁磚載不到，自動降級灰網格（控制/影像/遙測不受影響）。
+
 ## 仍待實機（硬體限定）
-- [ ] 手把配對到手機（藍牙 + 按鍵啟用 Gamepad API）→ 連 ROV_GS 開網頁；確認手把控制可用
+- [ ] 手把配對到手機/電腦（按鍵啟用 Gamepad API）→ 連 ROV_GS 開網頁；確認手把控制可用
 - [ ] 馬達轉向（左反槳/左推左轉）、急停 toggle、電量 R_int 校正、天線 0Ω 檢查
 
 ---
