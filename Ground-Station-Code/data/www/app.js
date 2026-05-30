@@ -11,6 +11,27 @@ const GS_HOST = location.host || '192.168.4.1';
 const MIN_WP_DIST_M = 5;
 const STREAM_SRC = 'http://192.168.4.100:80/stream';
 
+// 四個目標水域（離線圖磚已預打包，見 tools/fetch_tiles.py 的 SITES）。
+// 現場無對外網路，底圖只涵蓋這四處。bounds = [[latMin,lonMin],[latMax,lonMax]]，
+// 對齊 fetch_tiles 的下載 bbox，用來把地圖平移/縮放鎖在「有圖磚」的範圍內（避免黑屏）。
+const SITES = {
+  waishuangxi: { name: '外雙溪', center: [25.0985, 121.52025], zoom: 16,
+                 bounds: [[25.0955, 121.5095], [25.1015, 121.5310]] },
+  dahu:        { name: '大湖',   center: [25.08275, 121.6044], zoom: 16,
+                 bounds: [[25.0775, 121.6000], [25.0880, 121.6088]] },
+  bihu:        { name: '碧湖',   center: [25.08225, 121.58375], zoom: 17,
+                 bounds: [[25.0795, 121.5805], [25.0850, 121.5870]] },
+  keelung:     { name: '基隆河', center: [25.07525, 121.5615], zoom: 16,
+                 bounds: [[25.0700, 121.5520], [25.0805, 121.5710]] },
+};
+const MAP_MIN_ZOOM = 15;   // 有圖磚的最低 zoom；不准再縮小（杜絕縮成世界圖→留白/黑屏）
+const MAP_MAX_ZOOM = 19;   // maxNativeZoom 17，再放大由 Leaflet 升取樣
+const MAP_MAX_NATIVE_ZOOM = 17;  // 實際下載到的最高 zoom（算「圖磚覆蓋範圍」用）
+const DEFAULT_SITE = 'waishuangxi';
+// 缺圖磚時回傳透明 1px，避免破圖；超出已下載範圍只會留白（底下有網格襯底）
+const TRANSPARENT_TILE =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC';
+
 // ---------- 狀態燈 ----------
 function setDot(id, on, warn) {
   const el = document.getElementById(id);
@@ -46,7 +67,7 @@ function applyTelemetry(d) {
   updateRSSIWarning(d.rssi);
   updateNavStatus(d.navWpIdx, d.navDistM);
   updateEstopBanner(d.estop);
-  updateRovMarker(d.lat, d.lng);
+  updateRovMarker(d.lat, d.lng, d.heading);   // heading 目前封包未帶 → 內部退回 GPS 航向推算
   if (d.photoAck) showPhotoToast();
 }
 window.__mockTelemetry = applyTelemetry;
@@ -115,6 +136,7 @@ function showPhotoToast() {
 
 // ---------- 地圖與航點（Leaflet 延遲載入，不擋首屏）----------
 let map, rovMarker = null, polyline = null, mapReady = false, leafletLoading = null;
+let currentSite = DEFAULT_SITE;
 const waypoints = [];
 
 // 首次開「航點」分頁時才動態載入 Leaflet（147KB），避免擋住遙測/手把/影像初始化
@@ -139,7 +161,8 @@ async function ensureMap() {
   try { await loadLeaflet(); } catch (_) { setHint('✖ 地圖元件載入失敗'); return; }
   initMap();
   mapReady = true;
-  setTimeout(() => { if (map) map.invalidateSize(); }, 60);  // 修手機地圖不顯示
+  // 容器尺寸就緒後再 invalidateSize + 重框一次（getBoundsZoom 需正確容器尺寸才算得準）
+  setTimeout(() => { if (map) { map.invalidateSize(); frameSite(SITES[currentSite]); } }, 60);
 }
 
 function haversineM(a, b) {
@@ -150,25 +173,72 @@ function haversineM(a, b) {
   return 2 * R * Math.asin(Math.sqrt(s));
 }
 
+// 已下載圖磚在「原生 zoom nz」實際覆蓋的 lat/lng 矩形：把 bbox 外擴到 256px 磚界＝螢幕真正看到的圖範圍。
+// （下載是「整塊磚」，覆蓋必然 ≥ bbox；用這個當 maxBounds，「能滑的範圍」才會等於「看得到的圖磚」。）
+function tileCoverageBounds(b, nz) {
+  const T = 256;
+  const nw = map.project(b.getNorthWest(), nz);
+  const se = map.project(b.getSouthEast(), nz);
+  const p0 = L.point(Math.floor(nw.x / T) * T, Math.floor(nw.y / T) * T);
+  const p1 = L.point(Math.ceil(se.x  / T) * T, Math.ceil(se.y  / T) * T);
+  return L.latLngBounds(map.unproject(p0, nz), map.unproject(p1, nz));
+}
+
+// maxBounds 動態跟「目前原生 zoom 的圖磚覆蓋」走 → 可滑動範圍 ＝ 看得到的圖磚（消除「看得到卻滑不到」）。
+function syncBoundsToTiles() {
+  if (!map || map.getSize().y === 0) return;
+  const b = L.latLngBounds(SITES[currentSite].bounds);
+  const nz = Math.min(Math.round(map.getZoom()), MAP_MAX_NATIVE_ZOOM);
+  map.setMaxBounds(tileCoverageBounds(b, nz));   // viscosity 1 → 硬停不回彈；覆蓋＝圖磚 → 不露黑邊
+}
+
+// 切場域/初始化：定 minZoom（視野塞進 bbox 的最小縮放，再小會露黑邊）→ setView → maxBounds 同步圖磚覆蓋。
+function frameSite(s) {
+  const b = L.latLngBounds(s.bounds);
+  map.setMinZoom(MAP_MIN_ZOOM);              // 先放開下限，免被上一場域的動態下限擋住 setView
+  map.setMaxBounds(null);
+  if (map.getSize().y > 0) {                 // 需容器尺寸才算得準（初次無尺寸 → else，待 ensureMap 重框）
+    const minZ = map.getBoundsZoom(b, true); // 視野塞進 bbox 的最小縮放（再縮出去就露黑邊）→ 當 minZoom
+    map.setMinZoom(minZ);
+    map.setView(b.getCenter(), minZ);
+    syncBoundsToTiles();                     // maxBounds = 該 zoom 圖磚覆蓋（≥bbox，可滑到所有已載入磚、無黑邊）
+  } else {
+    map.setView(b.getCenter(), s.zoom);      // 容器尚無尺寸 → 暫置中，ensureMap 會以正確尺寸重框
+    map.setMaxBounds(b);
+  }
+}
+
 function initMap() {
-  map = L.map('map', { zoomControl: true }).setView([25.0330, 121.5654], 16);
-  const tiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 18, attribution: '© OpenStreetMap'
+  // 無 +/- 縮放鈕、無右下角 attribution（手機雙指縮放）；硬邊界 viscosity 1（滑到邊界硬停、不回彈）
+  map = L.map('map', {
+    zoomControl: false, attributionControl: false,
+    minZoom: MAP_MIN_ZOOM, maxZoom: MAP_MAX_ZOOM, maxBoundsViscosity: 1.0,
   });
-  let tileFailed = false;
-  tiles.on('tileerror', () => { if (!tileFailed) { tileFailed = true; switchToCanvasGrid(); } });
-  tiles.addTo(map);
+  // 本地離線圖磚（LittleFS /tiles）：maxNativeZoom 17，再放大由 Leaflet 升取樣，不需更多檔
+  L.tileLayer('/tiles/{z}/{x}/{y}.png', {
+    minZoom: MAP_MIN_ZOOM, maxZoom: MAP_MAX_ZOOM, maxNativeZoom: MAP_MAX_NATIVE_ZOOM,
+    errorTileUrl: TRANSPARENT_TILE
+  }).addTo(map);
+  frameSite(SITES[currentSite]);           // 初次框住預設場域（容器就緒後 ensureMap 會再框一次）
+  document.querySelectorAll('.site-chip').forEach(c =>
+    c.classList.toggle('active', c.dataset.site === currentSite));
+  map.on('zoomend', syncBoundsToTiles);    // 每次縮放後讓 maxBounds 對齊該 zoom 的圖磚覆蓋
   map.on('click', (e) => addWaypoint(e.latlng.lat, e.latlng.lng));
   document.getElementById('btn-upload').addEventListener('click', uploadWaypoints);
   document.getElementById('btn-clear').addEventListener('click', clearWaypoints);
+  // 四場域快速跳轉
+  document.querySelectorAll('.site-chip').forEach(chip => {
+    chip.addEventListener('click', () => goToSite(chip.dataset.site));
+  });
 }
 
-function switchToCanvasGrid() {
-  const el = document.getElementById('map');
-  el.style.backgroundImage =
-    'linear-gradient(rgba(34,211,238,.12) 1px, transparent 1px), linear-gradient(90deg, rgba(34,211,238,.12) 1px, transparent 1px)';
-  el.style.backgroundSize = '40px 40px';
-  setHint('離線網格模式（地圖磁磚載入失敗，航點仍可設定）');
+function goToSite(key) {
+  const s = SITES[key];
+  if (!s || !map) return;
+  currentSite = key;
+  frameSite(s);                            // 填滿水域、硬邊界（解鎖縮放下限→setView→鎖新場域 bbox）
+  document.querySelectorAll('.site-chip').forEach(c =>
+    c.classList.toggle('active', c.dataset.site === key));
 }
 
 function wpIcon(n) {
@@ -179,14 +249,13 @@ function wpIcon(n) {
 function addWaypoint(lat, lng) {
   for (const w of waypoints) {
     if (haversineM({ lat, lng }, w) < MIN_WP_DIST_M) {
-      setHint('⚠ 太靠近既有航點（需 ≥ ' + MIN_WP_DIST_M + 'm），未新增');
+      setHint('⚠ 太靠近既有航點，未新增');   // 仍保留 5m 去重（防誤觸疊點），只是不顯示數字
       return;
     }
   }
   const marker = L.marker([lat, lng], { icon: wpIcon(waypoints.length + 1) }).addTo(map);
   waypoints.push({ lat, lng, marker });
   redraw();
-  setHint('點地圖新增航點（間距需 ≥ ' + MIN_WP_DIST_M + 'm）');
 }
 
 function clearWaypoints() {
@@ -204,15 +273,55 @@ function redraw() {
   }
 }
 
-function setHint(t) { setText('wp-hint', t); }
+// 提示無常駐：僅上傳結果/警告等需要時短暫顯示，2.5s 後自動隱藏（平時完全不出現在地圖上）。
+let hintTimer = null;
+function setHint(t) {
+  const el = document.getElementById('wp-hint');
+  if (!el) return;
+  el.textContent = t || '';
+  el.hidden = !t;
+  clearTimeout(hintTimer);
+  if (t) hintTimer = setTimeout(() => { el.hidden = true; }, 2500);
+}
 
-function updateRovMarker(lat, lng) {
+// 初始航向（0=北，順時針為正）。優先用遙測 heading（羅盤，目前未帶）；
+// 否則用 GPS 位移推算 course-over-ground（移動 ≥ COURSE_MIN_M 才更新，靜止維持上一航向）。
+let rovHeading = null, lastRovFix = null;
+const COURSE_MIN_M = 3;
+
+function bearingDeg(a, b) {
+  const toRad = x => x * Math.PI / 180, toDeg = x => x * 180 / Math.PI;
+  const p1 = toRad(a.lat), p2 = toRad(b.lat), dL = toRad(b.lng - a.lng);
+  const y = Math.sin(dL) * Math.cos(p2);
+  const x = Math.cos(p1) * Math.sin(p2) - Math.sin(p1) * Math.cos(p2) * Math.cos(dL);
+  return (toDeg(Math.atan2(y, x)) + 360) % 360;
+}
+
+// 有航向→旋轉箭頭（指向艇首）；無航向（剛開機、尚未位移）→圓點
+function rovIcon(h) {
+  const has = typeof h === 'number' && isFinite(h);
+  const inner = has
+    ? '<div class="rov-arrow" style="transform:rotate(' + h.toFixed(0) + 'deg)"></div>'
+    : '<div class="rov-dot"></div>';
+  return L.divIcon({ className: '', html: '<div class="rov-wrap">' + inner + '</div>',
+                     iconSize: [30, 30], iconAnchor: [15, 15] });
+}
+
+function updateRovMarker(lat, lng, headingFromTelem) {
   if (typeof lat !== 'number' || typeof lng !== 'number' || (lat === 0 && lng === 0) || !map) return;
+  const here = { lat, lng };
+  if (typeof headingFromTelem === 'number' && isFinite(headingFromTelem)) {
+    rovHeading = (headingFromTelem % 360 + 360) % 360;           // 真羅盤航向（日後接上）
+  } else if (lastRovFix && haversineM(lastRovFix, here) >= COURSE_MIN_M) {
+    rovHeading = bearingDeg(lastRovFix, here);                   // GPS 位移航向
+  }
+  lastRovFix = here;
   if (!rovMarker) {
-    rovMarker = L.circleMarker([lat, lng], { radius: 7, color: '#34d399', fillColor: '#34d399', fillOpacity: .9 })
+    rovMarker = L.marker(here, { icon: rovIcon(rovHeading), interactive: false, keyboard: false })
                  .addTo(map).bindTooltip('ROV');
   } else {
-    rovMarker.setLatLng([lat, lng]);
+    rovMarker.setLatLng(here);
+    rovMarker.setIcon(rovIcon(rovHeading));
   }
 }
 

@@ -64,15 +64,27 @@
       </div>
     </section>
 
-    <!-- 地圖 / 航點頁 -->
+    <!-- 地圖 / 航點頁：左地圖 + 右窄側邊欄 -->
     <section id="pane-map" class="pane">
       <div id="map"></div>
-      <div class="map-toolbar">
-        <button id="btn-upload" class="btn primary">上傳航點</button>
-        <button id="btn-clear" class="btn">清除</button>
-        <span id="wp-count" class="wp-count">航點 0</span>
-        <span id="wp-hint" class="wp-hint">點地圖新增航點（間距需 ≥ 5m）</span>
-      </div>
+      <!-- 提示浮在地圖左上：預設隱藏，僅上傳結果/警告時短暫閃現後自動消失（無常駐提示） -->
+      <div id="wp-hint" class="wp-hint" hidden></div>
+      <!-- 右側邊欄：上＝四場域跳轉（直排）、下＝上傳/清除 -->
+      <aside class="map-side" aria-label="航點控制">
+        <div class="side-sites" role="group" aria-label="場域快速跳轉">
+          <button class="site-chip active" data-site="waishuangxi">外雙溪</button>
+          <button class="site-chip"        data-site="dahu">大湖</button>
+          <button class="site-chip"        data-site="bihu">碧湖</button>
+          <button class="site-chip"        data-site="keelung">基隆河</button>
+        </div>
+        <div class="side-actions">
+          <span id="wp-count" class="wp-count">航點 0</span>
+          <div class="side-act-row">
+            <button id="btn-upload" class="btn primary">上傳</button>
+            <button id="btn-clear" class="btn">清除</button>
+          </div>
+        </div>
+      </aside>
     </section>
   </main>
 

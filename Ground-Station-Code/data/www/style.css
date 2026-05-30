@@ -234,15 +234,45 @@ body {
 }
 
 /* ---------- 地圖 / 航點 ---------- */
-#map { flex: 1 1 auto; min-height: 0; background: #0a111d; }
-.map-toolbar {
-  flex: 0 0 auto;
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 10px;
-  background: var(--panel);
-  border-top: 1px solid var(--line);
-  flex-wrap: wrap;
+/* 航點頁＝左地圖 + 右窄側邊欄（覆寫 .pane.active 的 column）；relative 供 wp-hint 浮層定位 */
+#pane-map.active { flex-direction: row; }
+#pane-map { position: relative; }
+#map {
+  flex: 1 1 auto; min-width: 0; min-height: 0;
+  background-color: #0a111d;
+  /* 鎖定範圍外/圖磚間隙留白處顯示淡網格（leaflet 容器設透明才看得到），像刻意的離線格線、非黑屏 */
+  background-image:
+    linear-gradient(var(--line2) 1px, transparent 1px),
+    linear-gradient(90deg, var(--line2) 1px, transparent 1px);
+  background-size: 32px 32px;
 }
+
+/* 右側邊欄（窄）：上＝四場域直排、下＝上傳/清除 */
+.map-side {
+  flex: 0 0 96px;
+  display: flex; flex-direction: column;
+  gap: 8px;
+  padding: 8px 7px;
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+  overflow-y: auto;
+}
+.side-sites { display: flex; flex-direction: column; gap: 6px; }
+.site-chip {
+  width: 100%;
+  padding: 9px 4px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(0,0,0,.22);
+  color: var(--muted);
+  font-size: 14px; font-weight: 700;
+  cursor: pointer;
+}
+.site-chip.active { color: var(--cyan); background: rgba(34,211,238,.12); border-color: var(--cyan); }
+.site-chip:active { transform: scale(.97); }
+.side-actions { margin-top: auto; display: flex; flex-direction: column; gap: 6px; }
+.side-act-row { display: flex; gap: 6px; }
+.side-act-row .btn { flex: 1 1 0; padding: 9px 4px; font-size: 13px; }
 .btn {
   padding: 9px 14px;
   border: 1px solid var(--line);
@@ -254,8 +284,42 @@ body {
 }
 .btn.primary { background: rgba(34,211,238,.15); border-color: var(--cyan); color: var(--cyan); }
 .btn:active { transform: scale(.97); }
-.wp-count { font-size: 13px; font-weight: 700; color: var(--cyan); font-family: "Roboto Mono", monospace; }
-.wp-hint { font-size: 12px; color: var(--muted); margin-left: auto; }
+.wp-count {
+  text-align: center;
+  font-size: 12px; font-weight: 700; color: var(--cyan);
+  font-family: "Roboto Mono", monospace;
+}
+/* 提示：浮在地圖左上（避開右側邊欄），半透明藥丸 */
+.wp-hint {
+  position: absolute; top: 8px; left: 8px; z-index: 800;
+  max-width: calc(100% - 112px);
+  padding: 5px 9px; border-radius: 6px;
+  background: rgba(5,8,15,.72); border: 1px solid var(--line2);
+  color: var(--muted); font-size: 11px; font-weight: 600;
+  -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+  pointer-events: none;
+}
+.wp-hint[hidden] { display: none; }   /* 預設/閒置時完全不顯示，不留空殼 */
+
+/* ROV 即時位置標記：有航向→旋轉箭頭（指艇首），無航向→脈動圓點 */
+.rov-wrap { width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; }
+.rov-arrow {
+  width: 0; height: 0;
+  border-left: 9px solid transparent;
+  border-right: 9px solid transparent;
+  border-bottom: 18px solid var(--green);
+  filter: drop-shadow(0 0 4px rgba(52,211,153,.85));
+  transition: transform .25s ease-out;
+}
+.rov-dot {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--green); box-shadow: 0 0 0 0 rgba(52,211,153,.6);
+  animation: rovPulse 1.6s ease-out infinite;
+}
+@keyframes rovPulse {
+  0%   { box-shadow: 0 0 0 0 rgba(52,211,153,.55); }
+  100% { box-shadow: 0 0 0 12px rgba(52,211,153,0); }
+}
 
 .wp-marker {
   background: var(--cyan); color: #04121a;
@@ -266,8 +330,8 @@ body {
   box-shadow: 0 0 8px rgba(34,211,238,.6);
 }
 
-/* Leaflet 深色微調 */
-.leaflet-container { background: #0a111d; }
+/* Leaflet 深色微調：容器透明 → 圖磚間隙/鎖定邊緣顯示 #map 的離線網格（而非黑屏） */
+.leaflet-container { background: transparent; }
 .leaflet-control-zoom a {
   background: var(--panel2) !important; color: var(--cyan) !important;
   border-color: var(--line) !important;
