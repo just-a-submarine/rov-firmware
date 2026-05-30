@@ -102,6 +102,9 @@ void broadcastTelemetry(const TelemetryPacket& pkt) {
     doc["bat"]        = pkt.batPct;
     doc["rssi"]       = pkt.rssi;
     doc["streamMode"] = pkt.streamMode;
+    doc["heading"]    = pkt.headingDeg;   // 校正後羅盤航向（前端 marker 朝向 + 校準讀數）
+    doc["magX"]       = pkt.magX;         // 原始磁場 X/Y（Gauss）：手機端自動校準收 min/max
+    doc["magY"]       = pkt.magY;
     doc["navWpIdx"]   = pkt.navWaypointIdx;
     doc["navDistM"]   = pkt.navDistanceM;
     doc["photoAck"]   = pkt.photoAck;

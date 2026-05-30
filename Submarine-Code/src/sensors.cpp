@@ -141,11 +141,23 @@ float getCorrectedHeading() {
     return heading;
 }
 
+// 原始（未校正）磁場 X/Y（Gauss）。手機端校準要的就是「未扣 offset/scale」的值，
+// 才能由 360° 旋轉的 min/max 反算硬鐵偏移與軟鐵比例。讀失敗回 false。
+bool getMagRaw(float& x, float& y) {
+    if (!g_compassOk) return false;
+    float gx, gy, gz;
+    if (!compass.getGaussField(&gx, &gy, &gz)) return false;
+    x = gx;
+    y = gy;
+    return true;
+}
+
 void readAllSensors(TelemetrySnapshot& snap) {
     gpsPoll();
 
     snap.depthM     = getDepthM();
     snap.headingDeg = getCorrectedHeading();
+    getMagRaw(snap.magX, snap.magY);   // 原始磁場（校準失敗則維持上次值，不致命）
 
     if (g_inaOk) {
         snap.currentA = ina260.readCurrent() / 1000.0f;     // mA → A

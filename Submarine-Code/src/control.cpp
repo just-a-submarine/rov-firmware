@@ -103,6 +103,9 @@ void networkTask(void*) {
         pkt.batPct         = snap.batPct;
         pkt.rssi           = rssi;
         pkt.streamMode     = cameraGetStreamMode();
+        pkt.headingDeg     = snap.headingDeg;   // 校正後航向（前端 marker 朝向）
+        pkt.magX           = snap.magX;         // 原始磁場（手機端羅盤校準收 min/max）
+        pkt.magY           = snap.magY;
         pkt.navWaypointIdx = snap.navWaypointIdx;
         pkt.navDistanceM   = snap.navDistanceM;
         // [診斷] 手動模式下借 navDistanceM 回傳相機狀態：-1=串流停用，否則=已發佈影格數

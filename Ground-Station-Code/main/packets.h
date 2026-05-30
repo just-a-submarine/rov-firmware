@@ -37,6 +37,9 @@ struct __attribute__((packed)) TelemetryPacket {
     uint8_t  streamMode;     // ROV 確認回傳
     uint8_t  navWaypointIdx; // 自動導航目標航點索引（0xFF = 未導航）
     float    navDistanceM;   // 距目標航點距離（公尺）
+    float    headingDeg;     // 校正後羅盤航向 0～360°（前端 marker 朝向；手機羅盤校準也讀）
+    float    magX;           // 原始（未校正）磁場 X，單位 Gauss — 供手機端自動校準收 min/max
+    float    magY;           // 原始（未校正）磁場 Y，單位 Gauss
     bool     photoAck;       // 拍照完成確認
     bool     ledOn;          // 目前燈實際狀態（Y 鍵開或深度>5cm 自動開）
     uint8_t  msgType;        // 3 = 遙測

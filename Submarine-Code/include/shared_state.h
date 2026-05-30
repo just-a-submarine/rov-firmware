@@ -20,6 +20,8 @@ struct TelemetrySnapshot {
     float   currentA = 0;
     float   powerW = 0;
     float   headingDeg = 0;
+    float   magX = 0;       // 原始（未校正）磁場 X/Y（Gauss），供手機端羅盤校準
+    float   magY = 0;
     uint8_t batPct = 0;
     int8_t  rssi = 0;
     uint8_t navWaypointIdx = NAV_IDX_NONE;
