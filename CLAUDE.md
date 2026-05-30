@@ -43,8 +43,9 @@
 - 框架：**PlatformIO + ESP-IDF**（平台釘 pioarduino `54.03.21-2`，Arduino 作為 component / core 3.x）；
   佈局 `main/`（**非** `src/`）。⚠ **必須用原生 PowerShell 建置**（非 MSYS/Git-Bash）。
 - env：`groundstation`，COM4 @115200。
-- 職責：Wi-Fi 純 AP、WebSocket 推遙測、HTTP 收航點並經 ESP-NOW 轉發、**Bluepad32 藍牙 Xbox 手把**、
-  差速混控。**不碰影像**（手機 `<img>` 直連 ROV `192.168.4.100`）。
+- 職責：Wi-Fi 純 AP、WebSocket（**收手機控制上行** + 推遙測）、HTTP 收航點並經 ESP-NOW 轉發、差速混控。
+  **控制來源＝手機**：手把藍牙連手機 → 手機網頁 Gamepad API → WS → 地面站；**Bluepad32 僅保留 BTstack 入口、
+  拒絕手把藍牙連線**（手把直連會餓死 Wi-Fi AP）。**不碰影像**（手機 `<img>` 直連 ROV `192.168.4.100`）。
 - 細節見 `Ground-Station-Code/CONTEXT.md`。
 
 ### 兩端協同
@@ -60,7 +61,7 @@
    修改後更新該檔頁尾「文件版本 / 最後更新」並註明改動。`doc` 為潛水艇與地面站共用，
    改動前確認影響的是哪一端或兩端。
 2. **實作刻意偏離 `doc/` 時，不一定改 doc，而是記到該子專案 `CONTEXT.md` 的「與文件的差異」**
-   （例：地面站手把已由有線 USB 改藍牙 Bluepad32、改 ESP-IDF；潛水艇 MJPEG 改 `esp_http_server`）。
+   （例：地面站手把由有線 USB 改為藍牙連手機、控制走手機 Gamepad→WS、改 ESP-IDF；潛水艇 MJPEG 改 `esp_http_server`）。
    doc 內明確錯誤（如腳位筆誤）則直接修 doc 並升版。
 3. **`CONTEXT.md` 兩份各自獨立維護**：潛水艇放潛水艇的、地面站放地面站的，不要互相污染。
    每次任務完成後更新對應 `CONTEXT.md`（硬體/MAC/COM 埠/待辦/驗證進度/踩坑）。

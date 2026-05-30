@@ -1,3 +1,27 @@
+# TODO — 文件對齊最新程式碼（2026-05-30）
+
+把 `doc/`、`CLAUDE.md`、`README.md` 對齊現行程式碼後推送。已核對的程式碼真實狀況 vs 文件落差：
+- 控制來源＝手把藍牙連**手機** → 手機 Gamepad API → WebSocket → 地面站（`gamepadSetRemote`）；
+  GS 端 Bluepad32 只保留 BTstack 入口、**拒絕手把藍牙**（會餓死 Wi-Fi AP）。doc 仍寫「有線 USB HID」。
+- 差速實機把 `(y+x, y-x)` 對調為 `rawLeft=y-x, rawRight=y+x`（轉向相反修正）。
+- 急停＝Start **latch toggle**（按一次鎖、再按解鎖 → re-enable EN），非瞬時。
+- 相機：XCLK 20MHz→**10MHz**（20MHz 出垂直條紋）；預設 SVGA→**VGA**；fb_count 2→**3**；
+  `CAM_VFLIP=1` 方向修正；MJPEG 用 **esp_http_server**（非 ESPAsyncWebServer）。
+- RSSI 降級改「固定 VGA + 3 段遲滯，只調壓縮率，極弱(<-86dBm)才暫停」。
+- 拍照改 **即時**（`takePhotoInstant`，存最新串流影格，不切 720p、不暫停）。
+- 相機容錯：開機/執行期自癒 reinit×3，救不回則 `g_camDead` 閒置（保留控制/遙測）。
+- `TelemetryPacket` 實際多 `bool ledOn`（doc/04 結構漏列）；submarine `lib_deps` 不含 ESPAsyncWebServer。
+
+- [x] README.md：架構圖控制鏈、依賴段手把、目前狀態
+- [x] CLAUDE.md：地面站職責（控制走手機 WS、Bluepad32 閒置）
+- [x] doc/03：手把不再由地面站供電；頁尾升版
+- [x] doc/04：職責表/拓樸圖、TelemetryPacket 補 ledOn、控制上行、setup、踩坑、頁尾
+- [x] doc/05：串流表/解析度/RSSI/setupCamera/即時拍照/函式庫/容錯、頁尾
+- [x] doc/06：手把藍牙連手機、差速對調、LEFT_MOTOR_INVERT、急停 latch、函式庫、頁尾
+- [x] 驗證 grep 無殘留過期敘述；commit + push
+
+---
+
 # TODO — 第三輪：手把改接手機 + 前端重構（2026-05-29）
 
 ## 根因確診（已驗證）

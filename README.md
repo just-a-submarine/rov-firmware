@@ -14,16 +14,21 @@
 ## 系統架構
 
 ```
-            手機瀏覽器
-              │  ├─ WebSocket（遙測 ~6.7Hz） ─┐
-              │  ├─ HTTP POST（航點）──────────┤→ 地面站 ESP32-S3（AP 192.168.4.1）
-              │  └─ MJPEG <img>（影像直連）──────────────────┐
-              │                                                │
-   藍牙 ┌─ Xbox 手把                                          │
-        └→ 地面站 ──ESP-NOW（控制/航點 ↕ 遙測）── 潛水艇 ESP32-S3 (STA 192.168.4.100)
-                                                              └─ OV5640 MJPEG Server
+   Xbox 手把 ──藍牙──▶ 手機瀏覽器（Gamepad API 當控制器）
+                          │
+                          ├─ WebSocket ──▶ 地面站 ESP32-S3（AP 192.168.4.1）
+                          │     • 控制上行（搖桿/按鍵）
+                          │     • 遙測下行（~5–10Hz）
+                          ├─ HTTP POST（航點）──▶ 地面站
+                          └─ MJPEG <img>（影像直連）─────────────┐
+                                                                  ▼
+   地面站 ──ESP-NOW（控制/航點 ↕ 遙測）──▶ 潛水艇 ESP32-S3（STA 192.168.4.100）
+                                            └─ OV5640 MJPEG Server（esp_http_server :80/stream）
 ```
 
+- **控制來源＝手機**：Xbox 手把藍牙配對到**手機**，手機網頁用 Gamepad API 讀取，經 WebSocket 上行到地面站，
+  地面站再以 ESP-NOW 轉發給潛水艇。地面站 Bluepad32 僅保留 BTstack 入口、**不接受手把藍牙連線**
+  （手把直連地面站會餓死 Wi-Fi AP）。
 - 地面站**不碰影像**：手機 `<img>` 直連潛水艇 `192.168.4.100`，地面站零負擔。
 - 兩端 ESP-NOW 封包格式**必須逐位元組一致**
   （`Submarine-Code/include/packets.h` ⟷ `Ground-Station-Code/main/packets.h`）。
@@ -89,15 +94,18 @@ pio run -e groundstation -t uploadfs      # 上傳網頁（韌體與網頁兩者
   - `managed_components/` — IDF component manager 依 `dependencies.lock` 於建置時自動下載。
   - `Ground-Station-Code/components/` — 手動 vendored 的依賴框架
     （arduino-esp32、Bluepad32、BTstack、ESPAsyncWebServer、AsyncTCP、ArduinoJson 等），
-    需自行放入該目錄；其中手把走 **Bluepad32（藍牙）**。
+    需自行放入該目錄。**Bluepad32 僅作 BTstack 入口維持 setup/loop**；手把實際配對到**手機**，
+    控制走手機網頁 Gamepad API → WebSocket（地面站不接受手把藍牙連線，避免餓死 Wi-Fi AP）。
 
 ---
 
 ## 目前狀態
 
-- 🟦 潛水艇：編譯/燒錄/開機驗證通過；感測器自檢、SD、相機 MJPEG、單機 AP 均 OK。
-  待實機：相機目視、GPS 定位、馬達/錄影、與地面站整合。
-- 🟩 地面站：韌體 + `buildfs` 編譯通過；手機網頁以假遙測驗證 UI/Leaflet/航點正確。
-  待實機：藍牙手把配對、與潛水艇 ESP-NOW 整合。
+- 🟦 潛水艇：編譯/燒錄/開機驗證通過；感測器自檢、SD、單機 AP 均 OK。相機 MJPEG 串流已實測出畫面
+  （VGA@10MHz、~6–7fps；20MHz 因相機 FPC 排線訊號完整性會出垂直條紋故降頻）；含開機/執行期自癒。
+  待實機：GPS 定位、馬達轉向、錄影、與地面站整合。
+- 🟩 地面站：韌體 + `buildfs` 編譯通過；手機網頁以假遙測驗證 UI/Leaflet/航點正確；
+  控制鏈改手機 Gamepad → WebSocket，潛水艇關聯 + ESP-NOW 遙測已實測通。
+  待實機：手把配對到手機後整體操控、與潛水艇馬達整合。
 
 詳細進度見各子專案 `CONTEXT.md`。
