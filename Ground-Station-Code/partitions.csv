@@ -1,7 +1,9 @@
-# 地面站分割表（16MB flash）：app 3MB + LittleFS 2MB（存手機網頁）
+# 地面站分割表（16MB flash）：app 3MB + LittleFS 4MB（手機網頁 + 離線地圖圖磚）
+# LittleFS 由 2MB 擴為 4MB：四水域離線 OSM 圖磚(z15-17)約 1.7MB，2MB 不夠；flash 尚餘 ~9MB。
+# ⚠ 改分割表後須「完整重燒」：app(-t upload，含寫入分割表) + 檔案系統(-t uploadfs)。
 # Name,     Type, SubType,  Offset,   Size
 nvs,        data, nvs,      0x9000,   0x6000
 phy_init,   data, phy,      0xf000,   0x1000
 factory,    app,  factory,  0x10000,  0x300000
-spiffs,     data, spiffs,   0x310000, 0x200000
-coredump,   data, coredump, 0x510000, 0x10000
+spiffs,     data, spiffs,   0x310000, 0x400000
+coredump,   data, coredump, 0x710000, 0x10000

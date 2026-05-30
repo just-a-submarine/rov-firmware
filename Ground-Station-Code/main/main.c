@@ -1,51 +1,36 @@
 // SPDX-License-Identifier: Apache-2.0
-// Copyright 2019 Ricardo Quesada
-// http://retro.moe/unijoysticle2
-
+// =============================================================================
+//  地面站進入點 app_main —— 【停用藍牙】版本
+//
+//  原 Bluepad32 範本的 app_main 會 btstack_init() + uni_init()，在 Arduino setup()
+//  之前就把 BT 控制器開機（log 可見 "BTstack up and running" 早於 setup）。本專案
+//  控制全走「手機瀏覽器 Gamepad API → WebSocket」，完全不使用藍牙；雙模 BT 控制器
+//  即使閒置仍與 Wi-Fi AP 分時共用 2.4GHz 無線電而影響吞吐（並出現 HCI/AP 互卡訊息）。
+//
+//  故此處不初始化 BTstack/Bluepad32：釋放 BT 控制器保留的 RAM，直接 bootstrap
+//  Arduino（啟動 setup()/loop() 任務，原本由 uni_init 的 on_init_complete 觸發）。
+//  → BT 控制器永不開機，與 Wi-Fi 零共存衝突。
+//
+//  註：sdkconfig 仍 CONFIG_BT_ENABLED=y（BT 程式碼仍編入 flash，但不會被初始化）。
+//      若要連 flash 一併回收，需移除 bluepad32/btstack 元件並改 BT_ENABLED=n（較大改動）。
+// =============================================================================
 #include "sdkconfig.h"
 
 #include <stddef.h>
 
-// BTstack related
-#include <btstack_port_esp32.h>
-#include <btstack_run_loop.h>
-#include <btstack_stdio_esp32.h>
+#include "esp_bt.h"            // esp_bt_controller_mem_release / ESP_BT_MODE_BTDM
+#include "arduino_bootstrap.h" // arduino_bootstrap()（啟動 Arduino 任務）
 
-// Bluepad32 related
-#include <arduino_platform.h>
-#include <uni.h>
-
-//
-// Autostart
-//
 #if CONFIG_AUTOSTART_ARDUINO
-void initBluepad32() {
-#else
+#error "本專案以自訂 app_main 啟動 Arduino，請維持 CONFIG_AUTOSTART_ARDUINO=n"
+#endif
+
 int app_main(void) {
-#endif  // !CONFIG_AUTOSTART_ARDUINO
-    // hci_dump_open(NULL, HCI_DUMP_STDOUT);
+    // 不開藍牙 → 回收 BT 控制器保留的 RAM。必須在任何 BT controller init 之前；
+    // 本專案不初始化 BT，故此呼叫應回 ESP_OK 並實際釋放記憶體。
+    esp_bt_controller_mem_release(ESP_BT_MODE_BTDM);
 
-// Don't use BTstack buffered UART. It conflicts with the console.
-#ifndef CONFIG_ESP_CONSOLE_UART_NONE
-#ifndef CONFIG_BLUEPAD32_USB_CONSOLE_ENABLE
-    btstack_stdio_init();
-#endif  // CONFIG_BLUEPAD32_USB_CONSOLE_ENABLE
-#endif  // CONFIG_ESP_CONSOLE_UART_NONE
-
-    // Configure BTstack for ESP32 VHCI Controller
-    btstack_init();
-
-    // hci_dump_init(hci_dump_embedded_stdout_get_instance());
-
-    // Must be called before uni_init()
-    uni_platform_set_custom(get_arduino_platform());
-
-    // Init Bluepad32.
-    uni_init(0 /* argc */, NULL /* argv */);
-
-    // Does not return.
-    btstack_run_loop_execute();
-#if !CONFIG_AUTOSTART_ARDUINO
+    // 啟動 Arduino setup()/loop() 任務（不經 Bluepad32/BTstack）。
+    arduino_bootstrap();
     return 0;
-#endif  // !CONFIG_AUTOSTART_ARDUINO
 }

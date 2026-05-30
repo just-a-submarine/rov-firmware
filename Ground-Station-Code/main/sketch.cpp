@@ -58,7 +58,7 @@ void setup() {
     printf("[GS] espnow done\n");
     setupWebServer();    // LittleFS + HTTP + WebSocket
     printf("[GS] web done\n");
-    setupGamepad();      // 控制改由手機 WS；GS 藍牙閒置
+    setupGamepad();      // 控制改由手機 WS；GS 藍牙停用（BT 不開機，釋放 RAM）
     xTaskCreate(streamProbeTask, "probe", 4096, nullptr, 1, nullptr);  // [診斷] GS→ROV stream 探測
     printf("[GS] >>> setup() done, ready.\n");
 }
