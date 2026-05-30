@@ -85,9 +85,8 @@ static const uint8_t GS_AP_MAC[6] = {0x14, 0xC1, 0x9F, 0x29, 0xEA, 0xAD};  // �
 #define CAM_PIN_PCLK     13
 #define CAM_PIN_PWDN     -1
 #define CAM_PIN_RESET    -1
-// XCLK：20/24MHz 皆無影格。降到 10MHz 排查「排線接觸不良/訊號完整性」——
-// 邊緣接觸的 FPC 在高速 PCLK 下會掉幀，降頻若能出畫面＝接觸不良（可重插改善）；
-// 仍無畫面＝模組/排線實體斷路（需重插或換模組）。
+// XCLK：20MHz 實測出現「垂直條紋」（FPC 在高速 PCLK 下訊號完整性差／位元錯誤，非掉幀）→
+// 降回 10MHz 畫面乾淨。幀率較低但無條紋；想在 20MHz 跑乾淨需換更短/更好的排線或改善接觸/焊接。
 #define CAM_XCLK_FREQ    10000000
 
 // 相機畫面方向（模組實裝方向修正）：1=翻轉、0=不翻。

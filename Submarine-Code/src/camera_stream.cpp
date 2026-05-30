@@ -40,7 +40,7 @@ bool reinitCamera() {
     vTaskDelay(pdMS_TO_TICKS(150));
     if (e != ESP_OK) { log_e("[CAM] reinit 失敗：0x%x", e); return false; }
     sensor_t* s = esp_camera_sensor_get();
-    if (s) { s->set_framesize(s, FRAMESIZE_SVGA); applyCamOrientation(s); }
+    if (s) { s->set_framesize(s, FRAMESIZE_VGA); applyCamOrientation(s); }
     return true;
 }
 
@@ -116,23 +116,29 @@ void startHttpServer() {
     log_i("MJPEG HTTP server 已啟動（:80/stream）");
 }
 
-// RSSI 降級（doc/05 §四）：僅在等級切換時套用，避免每影格重設
+// RSSI 降級（doc/05 §四）：流暢優先版——固定 VGA 解析度，只隨訊號調 JPEG 壓縮率，
+// 只有「極弱」才暫停。解析度不切換（避免每次切換相機重設造成卡頓），且 band 轉移加遲滯
+// （降級早、升級需更強訊號），避免在門檻附近抖動反覆切換 → 消除「自己頓住又活過來」。
 void applyQualityIfChanged() {
-    static int lastBand = -2;
+    static int band = 0;            // 0=一般 1=弱(更壓縮) 2=極弱(暫停)；皆維持 VGA
     int8_t rssi = g_rssi;
-    int band = (rssi > -60) ? 0 : (rssi > -75 ? 1 : 2);
-    if (band == lastBand) return;
-    lastBand = band;
+    int prev = band;
+    switch (band) {
+        case 0: if (rssi <= -70) band = 1;                         break;  // 一般→弱
+        case 1: if (rssi >  -64) band = 0; else if (rssi <= -86) band = 2; break;  // 弱↔一般／弱→暫停
+        case 2: if (rssi >  -82) band = 1;                         break;  // 暫停→弱（回升）
+    }
+    if (band == prev) return;
 
     sensor_t* s = esp_camera_sensor_get();
     if (!s) return;
-    if (band == 0)      { s->set_framesize(s, FRAMESIZE_SVGA); s->set_quality(s, 10); g_streamActive = true; }
-    else if (band == 1) { s->set_framesize(s, FRAMESIZE_VGA);  s->set_quality(s, 12); g_streamActive = true; }
-    else                { g_streamActive = false; }   // 訊號極弱暫停串流
+    if      (band == 0) { s->set_quality(s, 10); g_streamActive = true; }   // 一般：VGA q10（畫質較好）
+    else if (band == 1) { s->set_quality(s, 14); g_streamActive = true; }   // 弱：更壓縮省頻寬，仍不暫停
+    else                { g_streamActive = false; }                          // 極弱(< -86dBm)：才暫停
 }
 
 // 即時拍照：直接把「目前串流的最新影格」寫入 SD（不切解析度、不暫停串流）→ 零延遲、不中斷畫面。
-// 解析度＝目前串流尺寸（預設 SVGA 800×600）。LB 在 GS 端已做邊緣觸發（按一下一張）。
+// 解析度＝目前串流尺寸（預設 VGA 640×480）。LB 在 GS 端已做邊緣觸發（按一下一張）。
 void takePhotoInstant() {
     g_photoReq = false;
     if (!recorderIsCardReady()) return;
@@ -252,9 +258,9 @@ bool setupCamera() {
     g_camConfig.ledc_timer   = LEDC_TIMER_3;    // 避開馬達 LEDC（ledcAttach 佔用 ch0–5/timer0..）
     g_camConfig.ledc_channel = LEDC_CHANNEL_7;  // 相機 XCLK 用獨立 channel/timer，免與左馬達(ch0)衝突
     g_camConfig.pixel_format = PIXFORMAT_JPEG;
-    g_camConfig.frame_size   = FRAMESIZE_SVGA;  // 開機預設 800×600
-    g_camConfig.jpeg_quality = 10;
-    g_camConfig.fb_count     = 2;
+    g_camConfig.frame_size   = FRAMESIZE_VGA;   // 流暢優先：640×480（小幀、低延遲、弱訊號容錯）
+    g_camConfig.jpeg_quality = 10;              // 畫質優先一點（數字小=畫質好；VGA 幀仍不大）
+    g_camConfig.fb_count     = 3;               // 多一個緩衝平滑抖動（配 GRAB_LATEST 仍低延遲）
     g_camConfig.fb_location  = CAMERA_FB_IN_PSRAM;
     g_camConfig.grab_mode    = CAMERA_GRAB_LATEST;
 
