@@ -1,5 +1,25 @@
 # Lessons（踩坑與教訓）
 
+## 2026-05-30（五，第三批）— 停用藍牙要攔的是「範本的 app_main」，不是 setupGamepad
+
+### 🔵 Bluepad32 app 範本在 Arduino setup() 之前就把 BT 開機
+- **症狀/誤區**：要關地面站藍牙，第一直覺是在 `setupGamepad()` 不呼叫 `BP32.setup()` + `esp_bt_controller_mem_release()`。
+  **重燒後 log 打臉**：`Bluepad32 ... / BTstack up and running / BLE_INIT / Bluetooth MAC` 全印在 `[GS] setup() start`
+  **之前**，且 `mem_release` 回非 ESP_OK（BT 已被初始化，釋放無效）。還伴隨 `HCI not ready`、Wi-Fi
+  `AP mode...opcode=0x0c05 status=1` 互卡。
+- **真因**：本專案進入點是 Bluepad32 範本的 `main/main.c`（`app_main`）：`btstack_init()`+`uni_init()` 先把 BT 控制器
+  開機，**Arduino 的 setup()/loop() 是被 `uni_init` 的 `on_init_complete`→`arduino_bootstrap()` 啟動的**。
+  所以「在 setup() 裡關 BT」永遠太晚——BT 早就開了，且 setup() 本身是 BT 初始化鏈的產物。
+- **正解**：改寫 `main/main.c` 的 `app_main()`：**完全不跑 btstack/uni_init**，先 `esp_bt_controller_mem_release(ESP_BT_MODE_BTDM)`
+  回收 BT RAM，再**直接 `arduino_bootstrap()`** 啟動 setup()/loop()（與 BT 無關，loop 照跑）。
+  `arduino_bootstrap()` 在 `bluepad32_arduino/include/arduino_bootstrap.h`（C linkage，可從 main.c 呼叫）。
+- **驗證收穫**：log 不再有任何 BTstack/BLE/HCI 訊息、AP 乾淨起；**heap +65KB**（BT RAM 釋放）、
+  **flash −360KB**（linker 把不再被引用的 BTstack/Bluepad32 GC 掉）。→ 印證「BT 真的沒被連進來」。
+- **方法論**：① 改「停用某子系統」前，先確認**它是被誰、在哪一層初始化的**（看開機 log 的相對順序最快）；
+  別假設「不呼叫某個 high-level setup 就等於關掉」。② 框架/範本常在 `app_main` 偷塞 init——進入點檔（`main.c`）
+  才是真戰場。③ CONTEXT.md 舊敘述（「不可跳過 BT init 否則 loop 不跑」）是錯的假設，已順手更正——
+  **舊文件的推測也要被實測打臉時更新**。
+
 ## 2026-05-30（五，第二批）— 相機壞狀態的真正極限 + 序列埠開埠會重置 S3
 
 ### 🚨 sensor-wedge 需「實體斷電」；SoC reset（含開序列埠）救不回

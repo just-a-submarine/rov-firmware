@@ -8,7 +8,7 @@
 - WebSocket 推遙測給手機（150ms ≈ 6.7Hz）
 - HTTP POST 收手機上傳的航點，分塊經 ESP-NOW 轉給 ROV（每塊 14 點）
 - ESP-NOW 與 ROV 雙向（送控制/航點、收遙測）
-- 讀原廠 **Xbox Series 手把（藍牙 Bluepad32/BTstack）**，差速混控成馬達指令
+- 控制來源＝**手機瀏覽器 Gamepad API → WebSocket**（**GS 不使用藍牙**），差速混控成馬達指令
 - **不碰影像**：手機 `<img>` 直連 ROV `192.168.4.100`
 
 ## 建置框架（重要：已遷移 ESP-IDF）
@@ -62,15 +62,15 @@
   `python <esptoolpy>/esptool.py --port COMx --after hard_reset run`。
 
 ## 程式結構（`main/`，ESP-IDF component）
-- `main.c` — Bluepad32/BTstack 進入點（`initBluepad32()`）；autostart 後轉入 Arduino `setup()/loop()`。
+- `main.c` — 自訂 `app_main()`：**停用藍牙**（不跑 btstack/uni_init、`esp_bt_controller_mem_release` 釋放 BT RAM），
+  直接 `arduino_bootstrap()` 啟動 Arduino `setup()/loop()`。見「GS 藍牙完全停用」節。
 - `sketch.cpp` — Arduino `setup()/loop()`：初始化順序（依 `../doc/04` §七）+ loop 節流（控制 ~100Hz、遙測推送 ~6.7Hz）。
   **不呼叫 `Serial.begin()`**（會搶走 IDF console）；全程用 `printf` 走 IDF console（UART0 → COM4）。
 - `net_wifi.*` — `setupWifi_GS()` 純 AP + 關省電 + **coex 偏好 WIFI + 最大 TX 功率**（見「Wi-Fi/BLE 共存」）。
 - `espnow_link.*` — ESP-NOW 收發、`sendControl()`、`sendWaypointsToROV()`、`takeLatestTelemetry()`。
 - `web_server.*` — ESPAsyncWebServer + WebSocket `/ws`、`POST /api/waypoints`、靜態檔（LittleFS `/www`）。
-- `gamepad.*` — Bluepad32（BTstack）藍牙手把；對外只給軸值/按鍵（軸值已轉文件慣例：前推為負、右為正）。
-  **含「配對視窗」：開機開 BLE 掃描 `GS_PAIR_WINDOW_MS`(45s)，連上或逾時即關掃描**（見「Wi-Fi/BLE 共存」）。
-  `gamepadOpenPairing()` 可重開視窗（保留給 web 觸發）。
+- `gamepad.*` — WS 控制狀態 + 對外搖桿軸值/按鍵介面（軸值已轉文件慣例：前推為負、右為正）。
+  **不含任何藍牙**（藍牙在 `main.c` 停用）：`setupGamepad()`/`pollGamepad()` 為 no-op，僅 `gamepadSetRemote()` 餵 WS 值。
 - `diag.h` — 診斷開關（`GS_DIAG_STA`：每 3s 印 AP station 數/MAC/RSSI + haveTelem，正式可設 0）。
 - `control.*` — `computeDifferential()` 差速混控 + 按鍵邊緣狀態機。
 - `config.h` — SSID/pass/channel、`ROV_STA_MAC`（已填 `14:C1:9F:29:E0:B8`）、節流/死區/航點常數。
@@ -85,13 +85,60 @@ pio run -e groundstation -t buildfs   # 打包 LittleFS（data/www → 網頁）
 pio run -e groundstation -t uploadfs  # 上傳網頁到 LittleFS（韌體與網頁兩者都要做）
 pio device monitor -e groundstation   # 序列監看（COM4 @115200）
 ```
-- 分割表 `partitions.csv`（16MB flash）：factory app 3MB + spiffs(LittleFS) 2MB + coredump 64KB。
+- 分割表 `partitions.csv`（16MB flash）：factory app 3MB + spiffs(LittleFS) **4MB** + coredump 64KB。
+  ⚠ **LittleFS 由 2MB 擴為 4MB（2026-05-30，放離線地圖圖磚）**；改分割表後 **下次須完整重燒**：
+  `-t upload`（含寫入新分割表）+ `-t uploadfs`，只燒其一會對不上偏移。flash 尚餘 ~9MB。
 - `board_build.filesystem = littlefs`。
 
 ## 手機網頁（`data/www/`）
 `index.html` / `app.js` / `style.css` + 本地 Leaflet（`leaflet.js`/`leaflet.css`，**已 gzip**：`*.gz` 同名檔）。
 地圖點擊新增航點（間距 ≥5m 防呆）、即時遙測、串流徽章/RSSI 警告/拍照 toast/導航狀態、
-WebSocket 指數退避重連、tile 載入失敗降級灰網格。
+WebSocket 指數退避重連。
+
+**🗺 離線地圖圖磚（2026-05-30）**：現場無對外網路（純 AP），原本線上 OSM 圖磚（`tile.openstreetmap.org`）
+必然載不到。改 **本地離線圖磚**，預打包四個目標水域底圖進 LittleFS `data/www/tiles/{z}/{x}/{y}.png`。
+- **四場域**：外雙溪下游（雙溪濕地公園→福林橋）、大湖公園、碧湖公園、基隆河美堤/迎風河濱（自然親水彎）。
+  座標經 **Nominatim(OSM) 地理編碼校正**（內湖兩園經度一度抓錯：大湖在 121.602、碧湖 121.584）。
+- **圖源＝CARTO Voyager**（底圖 OSM 資料、OSM 街道樣式、免金鑰、允許小量離線快取）。
+  ⚠ **OSM 官方 `tile.openstreetmap.org` 禁止批次下載**：直接抓會回 200＋「Access blocked」圖（非真圖磚），勿用。
+- **產生工具**：`tools/fetch_tiles.py`（含 bbox→tile 換算、循序下載、雷同度防呆偵測封鎖頁、Pillow 量化壓縮、
+  `--optimize-only`）。z15–17、166 張、壓縮後 ~2.1MB（`collect()` 跨場域去重，相鄰磚自動共用）。重跑即可續抓/換圖源（`SOURCE` 變數切 Esri 衛星）。
+- **前端**（`app.js`）：`tileLayer('/tiles/{z}/{x}/{y}.png', {minZoom:15,maxZoom:19,maxNativeZoom:17,errorTileUrl:透明})`；
+  缺圖磚回透明（`#map` CSS 網格襯底；`.leaflet-container` 設透明讓網格透出，故留白＝格線非黑屏）。
+  `serveStatic('/',LittleFS,'/www/')` 已通用服務巢狀 `/tiles/**`，**韌體零改動**。`sw.js` runtime 快取同源圖磚（CACHE v7）。
+- 已驗證：166 張全唯一（非封鎖頁）、四場域中心磚目視皆對（外雙溪河道/大湖/碧湖湖面/美堤基隆河）、
+  **已 uploadfs 上板（COM4，4MB @0x310000，hash verified）**。手機實機看圖待現場。
+
+**🗺 航點頁 UI 改造 + 鎖範圍 + 即時艇位（2026-05-30）**：
+- **框範圍**（硬邊界不回彈、不露黑邊、且「能滑＝看得到的圖磚」；最終做法見第四批）：`map` 設 `maxBoundsViscosity:1`。
+  `frameSite(s)`：`minZoom=getBoundsZoom(b,true)`（視野塞進 bbox 的最小縮放）→`setView(中心,minZoom)`→`syncBoundsToTiles()`。
+  `maxBounds` **不是 bbox，而是 `tileCoverageBounds(b,原生zoom)`**＝把 bbox 外擴到 256px 磚界（＝實際下載到的圖磚範圍，≥bbox），
+  並在 `zoomend` 重算 → 每個 zoom「能滑的範圍正好等於看得到的圖磚」。`initMap`/`goToSite`/`ensureMap` 皆走它；SITES `bounds`＝下載 bbox。
+- **右側窄邊欄**（`index.html` `.map-side`，寬 96px）：上＝四場域 chip 直排、下＝「上傳/清除」並排；
+  `#pane-map.active{flex-direction:row}`。提示 `.wp-hint`（地圖左上浮層）**預設 `hidden`**，僅上傳結果/警告短暫顯示、2.5s 後自動消失（無常駐提示，見第三批）。
+- **即時艇位**（`updateRovMarker(lat,lng,heading)`）：旋轉箭頭 `.rov-arrow` 指艇首、無航向→脈動圓點 `.rov-dot`。
+  ⚠ **航向來源＝GPS 位移推算**（`bearingDeg`，位移 ≥3m 才更新）：因 `TelemetryPacket` **無 heading 欄**、
+  且羅盤校正仍預設（會偏）。前端已預留 `d.heading` 接口（遙測一帶就自動改用真羅盤）。
+- 驗證：puppeteer-core headless（直/橫向）截圖 — 邊欄/箭頭/切場域/縮放夾制（z3→夾 z16 無黑屏）皆 OK。
+- **介面精簡（2026-05-30 追加）**：移除地圖 +/- 縮放鈕（`zoomControl:false`，手機雙指縮放）、移除右下角
+  OpenStreetMap attribution（`attributionControl:false`）、移除提示中「間距需 ≥5m」字樣（5m 去重邏輯仍保留，
+  只是不顯示數字）。CACHE v3→v4 強制手機重抓。**已 uploadfs 上板（COM4，hash verified）**。
+- **地圖塊重抓＋操作感（2026-05-30 第二批）**：大湖 bbox `121.5985–121.6065`→`121.6000–121.6088`＝砍湖西住宅一行
+  （z17 col 109808）、補湖東一行（109812）貼湖面；碧湖不動。`fetch_tiles` 跨場域去重故相鄰磚自動共用、不重複佔空間。
+  操作感：此批一度改 `viscosity:0`+`fitBounds`，**已被第三批取代**（見下）。
+  孤兒磚（舊湖西 z17/109808 共 4 張）已刪 → 162 張。CACHE v4→v5。**已 uploadfs 上板（COM4，hash verified）**。
+- **地圖操作感最終版＋拿掉常駐提示（2026-05-30 第三批）**：使用者要「滑到邊界硬停、不要回彈、不露黑邊」。
+  → 把第二批的 `viscosity:0`（會回彈）/`fitBounds`（會留黑邊）**改回** `viscosity:1`（硬停）＋`maxBounds=bbox`（牆在圖磚內）＋
+  `minZoom=getBoundsZoom(b,true)`（視野填滿水域、禁止縮到露黑邊）。**移除常駐提示**：`goToSite`/`addWaypoint` 不再 `setHint`；
+  `#wp-hint` 預設 `hidden`、`setHint` 改 2.5s 自動隱藏（只剩上傳結果/警告會短暫閃現）。CACHE v5→v6。**已 uploadfs 上板（COM4，hash verified）**。
+- **能滑＝看得到的圖磚＋大湖南補一排（2026-05-30 第四批）**：使用者回報「縮小看到圖磚卻滑不過去」。根因＝下載是整塊磚、覆蓋 ≥ bbox，
+  但第三批把 `maxBounds` 鎖死在 bbox（比圖磚小）→ 看得到外圈磚卻滑不到。改 `maxBounds=tileCoverageBounds(b,原生zoom)`（隨 `zoomend` 動態，
+  Leaflet `project/unproject` 對齊磚界；Node 複刻投影驗證 z17＝下載磚 X[109809–109812]/Y[56095–56099]）。大湖 bbox 南界 `25.0795→25.0775`
+  （補 z17 第 56099 排、覆蓋到 25.0757）→ 166 張。CACHE v6→v7。**已 uploadfs 上板（COM4，hash verified）**。
+- ⚠ **即時艇位顯示的是「潛水艇」GPS 位置（非手機/操作者位置）**：marker 取自 `TelemetryPacket.lat/lng`
+  （ROV 板載 GPS，經 ESP-NOW→GS→WS 下推）。未用瀏覽器 Geolocation，故走在岸邊不會顯示「自己」的位置；
+  且地圖**不自動切場域**（maxBounds 鎖在當前場域）——ROV 在基隆河要先點「基隆河」chip 才看得到、且 ROV 需有
+  GPS fix（lat/lng 非 0,0）。要顯示操作者自身位置/自動依 GPS 切場域＝未來增強（見「待辦」）。
 
 **載入慢修正（2026-05-30）**：手機連上後載入很慢，主因＝`leaflet.js` 147KB 未壓縮 + `<head>` 同步
 `<script>` 擋住 app.js（WS/手把/影像初始化全等它經 SoftAP/LittleFS 傳完）。地圖在第二分頁、首屏用不到。
@@ -144,7 +191,25 @@ WebSocket 指數退避重連、tile 載入失敗降級灰網格。
 - 已用 headless 820×380 / 390×820 + 注入假遙測截圖驗證（分頁在頂列、單列座標完整、燈 開 琥珀）。
 - ⚠ 改了 `packets.h`（加 `ledOn`）→ **GS 韌體與潛水艇都要重燒**（已燒）；前端另需 uploadfs。
 
+## 🔵 GS 藍牙完全停用（2026-05-30）
+控制全走手機 WS、藍牙零功能 → **完全不初始化 BTstack/Bluepad32**，杜絕 BT/Wi-Fi 共存衝突。
+- **根因**：原 `main.c`（Bluepad32 範本 app_main）在 Arduino `setup()` **之前**就 `btstack_init()+uni_init()`
+  把 BT 控制器開機（log 見 `BTstack up and running`、`BLE_INIT` 早於 setup；並出現 `HCI not ready`、
+  Wi-Fi `setting AP mode...Failed command ... opcode=0x0c05 status=1` 互卡）。光在 `setupGamepad()` 不呼叫
+  `BP32.setup()` **沒用**——Arduino 任務是被 `uni_init` 的 `on_init_complete`→`arduino_bootstrap()` 啟動的。
+- **解法**：改寫 `main/main.c` 的 `app_main()` → 不跑 btstack/uni_init，先
+  `esp_bt_controller_mem_release(ESP_BT_MODE_BTDM)` 回收 BT 控制器 RAM，再直接 `arduino_bootstrap()`
+  啟動 setup()/loop()。`gamepad.cpp` 移除 Bluepad32（`setupGamepad()`/`pollGamepad()` 變 no-op，
+  僅留 `gamepadSetRemote()` 餵 WS 值與對外軸值介面）。
+- **驗證（COM4 重燒 + 開機 log）**：**無** BTstack/BLE_INIT/HCI 訊息；AP 乾淨起（`softAP(ROV_GS)->OK`，
+  互卡那行消失）；**heap 211→276 KiB（+65KB，BT RAM 釋放）**、**flash 1.35MB→988KB（linker GC 掉
+  BTstack/Bluepad32 死碼，−360KB）**；`haveTelem=1`、ROV `cam(影格)` 遞增＝鏈路健康。
+- sdkconfig 仍 `CONFIG_BT_ENABLED=y`（BT 編入 flash 但不初始化）；若要連這塊 flash 也回收，需移除
+  bluepad32/btstack 元件並改 `BT_ENABLED=n`（較大改動，未做）。
+
 ## Wi-Fi/BLE 共存（2026-05-29 實測，關鍵）
+> ⚠ **本節為「曾用藍牙」時期的實測與配對視窗方案；2026-05-30 起 GS 已完全停用藍牙**（見上節
+> 「GS 藍牙完全停用」），配對視窗/coex 偏好等皆已移除。本節保留作為「為何不用 BT」的依據與歷史。
 > 「手把走藍牙」與「Wi-Fi AP/ESP-NOW」同晶片共存其實**有衝突**，doc 初版「實測可共存」過於樂觀。
 - **ESP-NOW（連線無關、固定 ch1）完全不受影響**：全程 `haveTelem=1`，遙測穩定。
 - **BLE 主動掃描會搶 2.4GHz 射頻 → Wi-Fi WPA2 關聯握手封包遺失 → STA/手機關聯不上**。
@@ -163,27 +228,31 @@ WebSocket 指數退避重連、tile 載入失敗降級灰網格。
 
 ## 與文件的差異（刻意）
 > 設計規格在 `../doc/`（共用文件，描述的是初版設計）；以下為實作刻意偏離規格之處。
-1. **手把改配對到「手機」，控制走 WebSocket（非 GS 藍牙）**。
+1. **控制走 WebSocket（手機 Gamepad API），GS 完全不使用藍牙**。
    ⚠ 實測定論：**連線中的 classic-BT 手把會完全餓死 GS Wi-Fi AP**（gamepad 連線→AP stations=0、
    ROV/手機 -127、影像連不上；PREFER_WIFI 壓不住）。故手把改配對到手機，瀏覽器 Gamepad API 讀軸值
    經既有 WebSocket 上行（`web_server.cpp` WS_EVT_DATA → `gamepadSetRemote`），GS 轉 ESP-NOW。
-   GS 藍牙保持閒置：`enableNewBluetoothConnections(false)`+`forgetBluetoothKeys()`+onConnected 立即
-   `disconnect()` 踢掉回連手把（閒置 BT 不影響 Wi-Fi）。`gamepad.cpp` 已不讀 BP32 軸值。
-   （原 Bluepad32/BTstack 入口仍保留以驅動 setup/loop；只是不接受手把連線。）
+   **2026-05-30 起更進一步：BT 控制器完全不開機**（`main.c` 停用 btstack/uni_init、釋放 BT RAM，
+   見「GS 藍牙完全停用」節）→ 連閒置 BT 的共存影響都消除。`gamepad.cpp` 已無任何 Bluepad32 依賴。
 2. **建置框架由 Arduino core 2.0.x 改為 ESP-IDF（Arduino as component, core 3.x）**，
    board 由 `esp32s3usbotg` 改為 `esp32-s3-devkitc-1`，分割表改 `partitions.csv`。
-3. 入口為 Bluepad32 autostart（`main.c`，編譯為 `int app_main()`，**非** autostart-arduino；
-   setup()/loop() 由 BTstack run loop 經 arduino_platform 驅動 → 不可單純跳過 BT 初始化，否則 loop 不跑）。
+3. 入口 `main.c` 為自訂 `app_main()`（`CONFIG_AUTOSTART_ARDUINO=n`）：**已停用藍牙**，不跑 btstack/uni_init，
+   改直接 `arduino_bootstrap()` 啟動 setup()/loop()（不需 BTstack run loop）。
+   ⚠ 早期版本曾誤以為「跳過 BT 初始化 loop 就不跑」——其實 Arduino 任務由 `arduino_bootstrap()` 啟動，
+   與 BT 無關。詳見「GS 藍牙完全停用」節。
+4. **地圖底圖改離線本地圖磚**（`../doc/04` 的「地圖」假設線上 OSM；現場無網路故預打包四水域圖磚進 LittleFS）。
+   詳見上節「離線地圖圖磚」；分割表因此由 2MB 擴為 4MB。地圖鎖在圖磚範圍（minZoom+maxBounds）。
+5. **地圖艇位航向暫用 GPS 位移推算**（非羅盤）：`TelemetryPacket` 無 heading 欄，`../doc/06` 的羅盤航向尚未
+   進遙測鏈路。要接真羅盤：兩端 `packets.h` 同步加 `float headingDeg` + ROV 填 `getCorrectedHeading()` +
+   重燒 ROV；前端 `updateRovMarker` 已預留 `d.heading` 接口。
 
 ## ⚠ 待辦 / 實機注意
 1. **ESP-NOW MAC 配對**：
    - `config.h` `ROV_STA_MAC` 已填 `14:C1:9F:29:E0:B8`（ROV 的 STA MAC）。
    - 地面站 AP MAC 為 `14:C1:9F:29:EA:AD`（改 ESP-IDF 後變動），已填入 ROV 端 `config.h` `GS_AP_MAC`。
    - 開機序列埠（COM4@115200）仍會印出本機 AP MAC，可再次核對。
-2. **藍牙手把配對（待實機驗證）**：
-   - **只在開機後 45s「配對視窗」內可配對/重連**（之後關掃描保 Wi-Fi）；逾時未連需重開機重開視窗。
-   - 首次配對時，附近其他曾配對過此手把的裝置（尤其開發 PC）藍牙須關閉，否則手把被搶連回去；
-     配對成功後綁定、之後每次開機在視窗內自動重連（見 `gamepad.h` 註解、「Wi-Fi/BLE 共存」節）。
+2. **手把＝配對到「手機」（GS 不使用藍牙）**：手把以藍牙配對到手機，網頁 Gamepad API 經 WS 上行；
+   **GS 端藍牙已完全停用**（無配對視窗、無 BTstack，見「GS 藍牙完全停用」節），不需理會 GS 藍牙。
    - 供電：地面站端建議仍以 5V/2A 升壓模組穩定供電（`../doc/03` §一、`../doc/06` §一）。
 3. **軸向/方向**：`gpAxisLY/RY` 已轉成文件慣例（前推為負）。若實機前後/轉向相反，
    調 `gamepad.cpp` 的負號或 `control.cpp` 映射。

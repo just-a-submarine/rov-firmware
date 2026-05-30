@@ -1,3 +1,37 @@
+# TODO — 航點地圖：鎖定範圍 + 右側邊欄 + 即時艇位（2026-05-30）
+
+## 需求
+1. 地圖鎖在圖磚範圍內：縮放/平移皆受限，杜絕無限縮小→黑屏。
+2. 右側邊欄：上＝四地點鈕（直排）、下＝「上傳/清除」並排；欄要窄，留空間給地圖。
+3. 即時顯示潛水艇位置 + 朝向（GPS 有效時）。
+
+## 待辦
+- [x] 讀現況 + 確認 heading 來源（封包無 heading → 用 GPS 位移推算航向，保留 d.heading 接口）
+- [x] app.js：SITES 加 bounds；initMap 設 minZoom/maxBounds/viscosity；goToSite 切 bounds
+- [x] app.js：updateRovMarker 旋轉箭頭（GPS 航向；靜止→圓點）+ bearingDeg 助手
+- [x] index.html：航點頁改 #map + 右側 .map-side + wp-hint 浮層
+- [x] style.css：#pane-map row、.map-side 窄欄、.rov-arrow、wp-hint 浮層、leaflet 容器透明
+- [x] sw.js：CACHE v2 → v3
+- [x] build LittleFS + 燒錄 GS（COM4，原生 PowerShell，-t uploadfs）
+- [x] 更新 CONTEXT.md
+- [x] Review
+
+## 與文件差異
+朝向來源＝GPS course-over-ground（前端推算），非羅盤；因 TelemetryPacket 無 heading 欄、
+且羅盤校正參數仍預設（會偏）。日後要真羅盤航向：兩端 packets.h 同步加 float headingDeg
++ ROV 填 getCorrectedHeading() + 重燒 ROV；前端已預留 d.heading 接口。
+
+## Review
+- 純前端改動（app.js / index.html / style.css / sw.js），韌體 C++ 與分割表未動 → 只 uploadfs。
+- 鎖範圍用 minZoom15 + 每場域 maxBounds(viscosity1)，切場域先解鎖再 setView 再上鎖；
+  容器透明讓間隙顯示離線網格，根除「縮小變黑屏」。
+- 驗證：node --check 通過；puppeteer-core headless 直/橫向截圖 4 張 —
+  右側窄邊欄（四地點直排 + 上傳/清除並排）、艇位綠箭頭（GPS 推算/帶 heading 皆對）、
+  z3→夾 z16 無黑屏、切大湖 bounds+中心正確。uploadfs COM4 SUCCESS（hash verified）。
+- 剩手機現場目視（本機 USB 網卡連不上 ROV_GS，無法代測）。
+
+---
+
 # TODO — 文件對齊最新程式碼（2026-05-30）
 
 把 `doc/`、`CLAUDE.md`、`README.md` 對齊現行程式碼後推送。已核對的程式碼真實狀況 vs 文件落差：
