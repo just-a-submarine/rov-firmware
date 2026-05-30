@@ -66,7 +66,13 @@
 ## 待實機填入 / 調整（程式內以 `// TODO(實機)`）
 - `config.h` `GS_AP_MAC`：地面站 AP MAC。**未填前 ESP-NOW 控制/遙測不通**。
   （ROV 開機序列會印出自己的 STA MAC，給地面站 peer 用。）
-- `sensors.cpp` 羅盤校正：`offsetX/Y`、`scaleX/Y`、馬達干擾補償表（需轉 360° 校正）。
+- `sensors.cpp` 羅盤校正：`g_offsetX/Y`、`g_scaleX/Y` 仍預設（0/1）→ **用手機「🧭 校準」轉一圈**
+  得常數後貼回重燒（流程見下方變更紀錄 / `doc/06 §五`）。
+- 羅盤兩個未實作項（見 `doc/06 §五`）：
+  - `HEADING_OFFSET_DEG` 單一常數＝**裝設水平旋轉角＋磁偏角**（台北西偏 ~4.5°）；在 `getCorrectedHeading()` 末端加上、對 360° 取模。
+  - `motorComp`（馬達動態干擾補償）：**先測再做**——艇固定比較「馬達關 vs 滿油門」航向漂多少，漂小不必補、能拉開距離優先；
+    要做就艇固定、左右馬達各檔正反推、記 `magX/Y` 變化得 `kX/kY` 小表，runtime 先扣再算。
+  - 擺設：**水平旋轉角免對準艇首**（固定偏移、常數補）；**傾斜必須裝平**（無 IMU 補不了）；**離馬達/電流線越遠越好**。
 - `navigation.cpp` PID 參數（起始 2.0/0.5/0.1）；Geofence 邊界座標（目前只用吸引力）。
 - `config.h` SD 接腳 `SD_CLK/CMD/D0`(39/38/40)：若掛載失敗，對調 CLK/CMD 再試。
 
@@ -120,6 +126,12 @@
   → 相機死時手機 `<img>` 觸發 error 顯示「影像中斷，重連中」並每 3s 重連，**不再永遠卡「影像連線中…」**；相機復原後自動接上。
 - **燈狀態進遙測（2026-05-30）**：`motors.cpp` 記錄 `setLed` 命令值、`ledIsOn()` 取出；`networkTask` 填 `TelemetryPacket.ledOn`
   （兩端 packets.h 同步加），GS `web_server.cpp` 轉 JSON `led` → 手機狀態列「燈 開/關」。
+- **羅盤航向＋原始磁場進遙測，支援手機端自動校準（2026-05-30）**：`TelemetryPacket` 加 `float headingDeg/magX/magY`
+  （兩端 packets.h 逐位元組同步，插在 `navDistanceM` 後、`photoAck` 前，`msgType` 維持最後，GS 收包靠 `data[len-1]` 判型不受影響）。
+  `sensors.cpp` 新增 `getMagRaw()` 取**未校正** Gauss；`readAllSensors` 填 `snap.magX/magY`；`networkTask` 一併送出。
+  手機網頁「🧭 校準」轉一圈收 min/max 算 `offset/scale`（模型對齊 `getCorrectedHeading` 的 `x=(gx-offX)*scaleX`，
+  數值驗證還原航向誤差≈0°）。marker 亦改用真 `heading`（`magX/Y`=0,0 視為羅盤未上線→退回 GPS 位移）。
+  **已燒錄 COM6（hash verified）；GS 端 `haveTelem=1` 證實新封包（43B）逐位元組正確收發**。
 - **LB 即時拍照（2026-05-30）**：原 `takePhotoAndSave` 會切 720p+暫停串流+等 150ms（慢又頓）→ 改 **`takePhotoInstant`**：
   直接把目前串流最新影格（SVGA）寫 SD，**零延遲、不中斷畫面**。GS 端 LB 已邊緣觸發（按一下一張）。
   - 診斷工具（已留）：`WIFI_DIAG` 下 streamTask 每 2s 印 `[CAM] ok/null/big/seq`；

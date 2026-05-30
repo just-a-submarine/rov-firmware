@@ -1,3 +1,39 @@
+# TODO — 電子羅盤航向上手機 + 完整自動校準（2026-05-30）
+
+## 背景
+羅盤已接、ROV 有讀（`snap.headingDeg = getCorrectedHeading()`），但 `TelemetryPacket`
+無 heading 欄 → 航向沒傳到手機，marker 只能 GPS 位移推。使用者要在手機顯示航向並做
+「完整自動校準」（轉 360° 自動算 hard/soft-iron），校準完才去設航點自走。
+
+## 設計
+TelemetryPacket 加三欄（兩端逐位元組一致，插 navDistanceM 後、photoAck 前，msgType 維持最後）：
+`float headingDeg`（校正後航向）、`float magX`/`float magY`（**原始未校正** Gauss，校準用）。
+校準數學（對齊 sensors.cpp `x=(gx-offX)*scaleX`）：
+offset=(max+min)/2；rX=(maxX-minX)/2、rY=(maxY-minY)/2、avg=(rX+rY)/2、scaleX=avg/rX、scaleY=avg/rY。
+
+## 待辦
+- [ ] ROV include/packets.h：+headingDeg/magX/magY
+- [ ] ROV include/shared_state.h：TelemetrySnapshot +magX/magY
+- [ ] ROV src/sensors.h/.cpp：getMagRaw（原始 Gauss）；readAllSensors 填 snap.magX/magY
+- [ ] ROV src/control.cpp：組包填 pkt.headingDeg/magX/magY
+- [ ] GS main/packets.h：同三欄（逐位元組一致）
+- [ ] GS main/web_server.cpp：JSON 加 heading/magX/magY
+- [ ] index.html：航向格 + 校準浮層
+- [ ] app.js：顯示航向；校準模組（min/max→offset/scale→可貼 C++）
+- [ ] style.css + sw.js（CACHE v8）
+- [x] doc/04（封包/WS，v2.9）、doc/06（§五 校準流程，v2.9）、兩 CONTEXT.md
+- [x] 兩端建置通過（GS 原生 PowerShell）+ packets 逐位元組一致
+
+## Review
+- 封包 +headingDeg/magX/magY（兩端 packets.h 逐欄一致驗證：16 欄、msgType 仍最後）；
+  ROV getMagRaw 取原始 Gauss；marker 改真航向、magX/Y=0,0 退回 GPS；HUD 加「航向」格。
+- 🧭 校準浮層：轉一圈收 min/max、12 扇區涵蓋度、輸出可貼 C++ 常數（offset/scale 對齊 sensors.cpp）。
+- 驗證：node --check 過；校準數學 Node 數值驗證還原航向誤差≈0°（7°取樣 0.05°→細取樣 0°）；
+  ROV/GS build SUCCESS；兩板燒錄 hash verified；**COM4 診斷 haveTelem=1＝新 43B 封包正確收發、cam seq 遞增（無 wedge）**。
+- 殘留：磁偏角（台北西偏 ~4.5°）未補；現場目視仍待（本機 USB 網卡連不上 ROV_GS）。未提交/未推送（使用者未要求）。
+
+---
+
 # TODO — 航點地圖：鎖定範圍 + 右側邊欄 + 即時艇位（2026-05-30）
 
 ## 需求

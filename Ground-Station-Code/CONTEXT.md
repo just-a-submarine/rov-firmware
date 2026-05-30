@@ -105,7 +105,7 @@ WebSocket 指數退避重連。
   `--optimize-only`）。z15–17、166 張、壓縮後 ~2.1MB（`collect()` 跨場域去重，相鄰磚自動共用）。重跑即可續抓/換圖源（`SOURCE` 變數切 Esri 衛星）。
 - **前端**（`app.js`）：`tileLayer('/tiles/{z}/{x}/{y}.png', {minZoom:15,maxZoom:19,maxNativeZoom:17,errorTileUrl:透明})`；
   缺圖磚回透明（`#map` CSS 網格襯底；`.leaflet-container` 設透明讓網格透出，故留白＝格線非黑屏）。
-  `serveStatic('/',LittleFS,'/www/')` 已通用服務巢狀 `/tiles/**`，**韌體零改動**。`sw.js` runtime 快取同源圖磚（CACHE v7）。
+  `serveStatic('/',LittleFS,'/www/')` 已通用服務巢狀 `/tiles/**`，**韌體零改動**。`sw.js` runtime 快取同源圖磚（CACHE v8）。
 - 已驗證：166 張全唯一（非封鎖頁）、四場域中心磚目視皆對（外雙溪河道/大湖/碧湖湖面/美堤基隆河）、
   **已 uploadfs 上板（COM4，4MB @0x310000，hash verified）**。手機實機看圖待現場。
 
@@ -117,8 +117,8 @@ WebSocket 指數退避重連。
 - **右側窄邊欄**（`index.html` `.map-side`，寬 96px）：上＝四場域 chip 直排、下＝「上傳/清除」並排；
   `#pane-map.active{flex-direction:row}`。提示 `.wp-hint`（地圖左上浮層）**預設 `hidden`**，僅上傳結果/警告短暫顯示、2.5s 後自動消失（無常駐提示，見第三批）。
 - **即時艇位**（`updateRovMarker(lat,lng,heading)`）：旋轉箭頭 `.rov-arrow` 指艇首、無航向→脈動圓點 `.rov-dot`。
-  ⚠ **航向來源＝GPS 位移推算**（`bearingDeg`，位移 ≥3m 才更新）：因 `TelemetryPacket` **無 heading 欄**、
-  且羅盤校正仍預設（會偏）。前端已預留 `d.heading` 接口（遙測一帶就自動改用真羅盤）。
+  **航向來源＝真羅盤**（遙測 `heading`）；`magX/Y`=(0,0) 視為羅盤未上線→退回 GPS 位移推算（`bearingDeg`，位移 ≥3m）。
+  見下方「羅盤航向＋🧭 校準」批次。
 - 驗證：puppeteer-core headless（直/橫向）截圖 — 邊欄/箭頭/切場域/縮放夾制（z3→夾 z16 無黑屏）皆 OK。
 - **介面精簡（2026-05-30 追加）**：移除地圖 +/- 縮放鈕（`zoomControl:false`，手機雙指縮放）、移除右下角
   OpenStreetMap attribution（`attributionControl:false`）、移除提示中「間距需 ≥5m」字樣（5m 去重邏輯仍保留，
@@ -135,6 +135,12 @@ WebSocket 指數退避重連。
   但第三批把 `maxBounds` 鎖死在 bbox（比圖磚小）→ 看得到外圈磚卻滑不到。改 `maxBounds=tileCoverageBounds(b,原生zoom)`（隨 `zoomend` 動態，
   Leaflet `project/unproject` 對齊磚界；Node 複刻投影驗證 z17＝下載磚 X[109809–109812]/Y[56095–56099]）。大湖 bbox 南界 `25.0795→25.0775`
   （補 z17 第 56099 排、覆蓋到 25.0757）→ 166 張。CACHE v6→v7。**已 uploadfs 上板（COM4，hash verified）**。
+- **羅盤航向上手機＋🧭 校準浮層（2026-05-30 第五批）**：`TelemetryPacket` 加 `headingDeg/magX/magY`（兩端 packets.h 逐位元組同步），
+  `web_server.cpp` `broadcastTelemetry` 轉 JSON `heading/magX/magY`。前端：HUD 加「航向」格；marker 改用真 `heading`
+  （`magAlive` 判 `magX/Y`≠0,0，否則退回 GPS 位移）；航點頁側欄「🧭 校準」開浮層 → 轉一圈收 `magX/Y` min/max，
+  12 扇區涵蓋度確認轉滿，算 `offsetX/Y`+`scaleX/Y`（模型對齊 ROV `sensors.cpp`）並輸出可貼進 ROV 的 C++ 常數。
+  校準數學 Node 數值驗證還原航向誤差≈0°；`node --check` 過；GS build SUCCESS（987516B）。CACHE v7→v8。
+  **已 upload+uploadfs 上板（COM4，hash verified）；COM4 診斷 `haveTelem=1`＝新 43B 封包逐位元組正確收發**。
 - ⚠ **即時艇位顯示的是「潛水艇」GPS 位置（非手機/操作者位置）**：marker 取自 `TelemetryPacket.lat/lng`
   （ROV 板載 GPS，經 ESP-NOW→GS→WS 下推）。未用瀏覽器 Geolocation，故走在岸邊不會顯示「自己」的位置；
   且地圖**不自動切場域**（maxBounds 鎖在當前場域）——ROV 在基隆河要先點「基隆河」chip 才看得到、且 ROV 需有
@@ -242,9 +248,9 @@ WebSocket 指數退避重連。
    與 BT 無關。詳見「GS 藍牙完全停用」節。
 4. **地圖底圖改離線本地圖磚**（`../doc/04` 的「地圖」假設線上 OSM；現場無網路故預打包四水域圖磚進 LittleFS）。
    詳見上節「離線地圖圖磚」；分割表因此由 2MB 擴為 4MB。地圖鎖在圖磚範圍（minZoom+maxBounds）。
-5. **地圖艇位航向暫用 GPS 位移推算**（非羅盤）：`TelemetryPacket` 無 heading 欄，`../doc/06` 的羅盤航向尚未
-   進遙測鏈路。要接真羅盤：兩端 `packets.h` 同步加 `float headingDeg` + ROV 填 `getCorrectedHeading()` +
-   重燒 ROV；前端 `updateRovMarker` 已預留 `d.heading` 接口。
+5. **地圖艇位航向＝真羅盤**（已接通，2026-05-30 第五批）：`TelemetryPacket` 已加 `headingDeg/magX/magY`，
+   marker 改用真 `heading`、羅盤未上線（`magX/Y`=0,0）才退回 GPS 位移。校準靠手機「🧭 校準」浮層。
+   殘留差異：磁偏角（台北西偏 ~4.5°）尚未補，自動導航的真北目標方位與磁北羅盤會有固定夾角（見 `../doc/06 §五`）。
 
 ## ⚠ 待辦 / 實機注意
 1. **ESP-NOW MAC 配對**：
