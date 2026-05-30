@@ -355,3 +355,46 @@ body {
   .tval.small { font-size: 11px; }
   .rssi-warn { display: none; }                    /* 省一列：靠訊號數值與顏色判讀 */
 }
+
+/* ===== 羅盤校準浮層（🧭 校準）===== */
+.cal-open { width: 100%; }
+.cal-overlay {
+  position: fixed; inset: 0; z-index: 1000;
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px; background: rgba(2,5,11,.72);
+  -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px);
+}
+.cal-overlay[hidden] { display: none; }
+.cal-card {
+  width: min(420px, 100%); max-height: 90vh; overflow: auto;
+  background: var(--panel); border: 1px solid var(--cyan); border-radius: 12px;
+  box-shadow: 0 0 24px rgba(34,211,238,.25);
+  padding: 14px; display: flex; flex-direction: column; gap: 10px;
+}
+.cal-head { display: flex; align-items: center; justify-content: space-between;
+  font-size: 15px; font-weight: 800; color: var(--cyan); letter-spacing: 1px; }
+.cal-x { width: 30px; height: 30px; border: 1px solid var(--line); border-radius: 6px;
+  background: rgba(0,0,0,.25); color: var(--muted); font-size: 15px; cursor: pointer; }
+.cal-hint { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.cal-hint code { color: var(--cyan); font-family: "Roboto Mono", ui-monospace, monospace; }
+.cal-live { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.cal-live > div {
+  display: flex; align-items: baseline; gap: 6px;
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg2);
+}
+.cal-live span { color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: 1px; }
+.cal-live b {
+  margin-left: auto; color: var(--green); font-size: 18px; font-weight: 800;
+  font-family: "Roboto Mono", ui-monospace, monospace;
+  text-shadow: 0 0 6px rgba(52,211,153,.5);
+}
+.cal-actions { display: flex; gap: 8px; }
+.cal-actions .btn { flex: 1 1 0; }
+.cal-out {
+  margin: 0; padding: 10px; border-radius: 8px;
+  background: #050a12; border: 1px solid var(--line);
+  color: var(--text); font-size: 12px; line-height: 1.5;
+  font-family: "Roboto Mono", ui-monospace, monospace;
+  white-space: pre-wrap; word-break: break-all; user-select: all;
+}
+.cal-card .btn:disabled { opacity: .45; cursor: not-allowed; }

@@ -44,6 +44,7 @@
     <div class="tcell"><span class="tlabel">電流</span><span id="t-current" class="tval">--</span><span class="tunit">A</span></div>
     <div class="tcell"><span class="tlabel">訊號</span><span id="t-rssi"    class="tval">--</span><span class="tunit">dBm</span></div>
     <div class="tcell"><span class="tlabel">深度</span><span id="t-depth"   class="tval">--</span><span class="tunit">m</span></div>
+    <div class="tcell"><span class="tlabel">航向</span><span id="t-heading" class="tval">--</span><span class="tunit">°</span></div>
     <div class="tcell wide"><span class="tlabel">座標</span><span id="t-latlng" class="tval small">--, --</span></div>
     <div class="tcell led"><span class="tlabel">燈</span><span id="t-led" class="tval small">--</span></div>
     <div id="rssi-warning" class="rssi-warn"></div>
@@ -83,12 +84,38 @@
             <button id="btn-upload" class="btn primary">上傳</button>
             <button id="btn-clear" class="btn">清除</button>
           </div>
+          <button id="btn-cal" class="btn cal-open" title="羅盤校準">🧭 校準</button>
         </div>
       </aside>
     </section>
   </main>
 
   <div id="photo-toast" class="toast">📷 已拍照存檔</div>
+
+  <!-- 羅盤校準浮層：把潛水艇放平水平轉一整圈，自動收 magX/Y 的 min/max →
+       算 hard-iron offset 與 soft-iron scale，輸出可直接貼進 sensors.cpp 的常數 -->
+  <div id="cal-overlay" class="cal-overlay" hidden>
+    <div class="cal-card">
+      <div class="cal-head">
+        <span>🧭 羅盤校準</span>
+        <button id="cal-close" class="cal-x" aria-label="關閉">✕</button>
+      </div>
+      <p class="cal-hint">潛水艇放平、水平緩慢轉一整圈（讓「涵蓋」集到 100%），再把下方常數貼進
+        <code>sensors.cpp</code> 重燒 ROV。</p>
+      <div class="cal-live">
+        <div><span>航向</span><b id="cal-heading">--</b>°</div>
+        <div><span>涵蓋</span><b id="cal-cover">0</b>%</div>
+        <div><span>磁場X</span><b id="cal-mx">--</b></div>
+        <div><span>磁場Y</span><b id="cal-my">--</b></div>
+      </div>
+      <div class="cal-actions">
+        <button id="cal-start" class="btn primary">開始收集</button>
+        <button id="cal-reset" class="btn">重置</button>
+      </div>
+      <pre id="cal-out" class="cal-out">尚未收集。按「開始收集」後把艇轉一圈。</pre>
+      <button id="cal-copy" class="btn" disabled>複製常數</button>
+    </div>
+  </div>
 
   <script src="/app.js"></script>
 </body>

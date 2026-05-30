@@ -67,8 +67,14 @@ function applyTelemetry(d) {
   updateRSSIWarning(d.rssi);
   updateNavStatus(d.navWpIdx, d.navDistM);
   updateEstopBanner(d.estop);
-  updateRovMarker(d.lat, d.lng, d.heading);   // heading 目前封包未帶 → 內部退回 GPS 航向推算
+  // 羅盤活著（原始磁場非 0,0）才用真航向；否則退回 GPS 位移推算（沿用舊行為）
+  updateRovMarker(d.lat, d.lng, magAlive(d) ? d.heading : undefined);
+  updateCompassCal(d);                        // 校準浮層：收 magX/Y min/max
   if (d.photoAck) showPhotoToast();
+}
+// 原始磁場 (0,0) 視為羅盤未上線（getCorrectedHeading 失敗回 0、magX/Y 維持 0）
+function magAlive(d) {
+  return typeof d.magX === 'number' && typeof d.magY === 'number' && (d.magX !== 0 || d.magY !== 0);
 }
 window.__mockTelemetry = applyTelemetry;
 
@@ -82,6 +88,7 @@ function updateTelemetry(d) {
   setText('t-power',   fmt(d.power, 1));
   setText('t-current', fmt(d.current, 2));
   setText('t-rssi',    (typeof d.rssi === 'number') ? d.rssi : '--');
+  setText('t-heading', magAlive(d) ? fmt(d.heading, 0) : '--');   // 羅盤未上線顯示 --
   setText('t-latlng',  fmt(d.lat, 6) + ', ' + fmt(d.lng, 6));
   updateLed(d.led);
 }
@@ -284,8 +291,8 @@ function setHint(t) {
   if (t) hintTimer = setTimeout(() => { el.hidden = true; }, 2500);
 }
 
-// 初始航向（0=北，順時針為正）。優先用遙測 heading（羅盤，目前未帶）；
-// 否則用 GPS 位移推算 course-over-ground（移動 ≥ COURSE_MIN_M 才更新，靜止維持上一航向）。
+// 初始航向（0=北，順時針為正）。優先用遙測 heading（羅盤，magX/Y 非 0 才採信）；
+// 羅盤未上線時退回 GPS 位移推算 course-over-ground（移動 ≥ COURSE_MIN_M 才更新，靜止維持上一航向）。
 let rovHeading = null, lastRovFix = null;
 const COURSE_MIN_M = 3;
 
@@ -437,6 +444,95 @@ function initGamepad() {
   setInterval(pollAndSendGamepad, 40);   // ~25Hz 上行（GS 以最新值 100Hz 轉 ESP-NOW）
 }
 
+// ---------- 羅盤校準（手機端：轉 360° 收 magX/Y min/max → 算 offset/scale）----------
+// 模型對齊 ROV sensors.cpp：x=(gx-offX)*scaleX、y=(gy-offY)*scaleY、heading=atan2(y,x)。
+//   offset=(max+min)/2（hard-iron 平移）；scale=avg(rX,rY)/r（soft-iron 把橢圓拉回正圓）。
+const CAL_SECTORS = 12;   // 圓分 12 個 30° 扇區，全部踩過 → 確認真的轉滿一圈（涵蓋 100%）
+const cal = { on: false, open: false, minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity, sectors: 0 };
+
+function calReset() {
+  cal.minX = cal.minY = Infinity;
+  cal.maxX = cal.maxY = -Infinity;
+  cal.sectors = 0;
+}
+function popcount(n) { let c = 0; while (n) { c += n & 1; n >>>= 1; } return c; }
+
+function updateCompassCal(d) {
+  if (!cal.open) return;                       // 浮層沒開就不算
+  const hasMag = magAlive(d);
+  setText('cal-heading', hasMag ? fmt(d.heading, 0) : '--');
+  setText('cal-mx', hasMag ? d.magX.toFixed(3) : '--');
+  setText('cal-my', hasMag ? d.magY.toFixed(3) : '--');
+  if (!cal.on || !hasMag) return;
+  if (d.magX < cal.minX) cal.minX = d.magX;
+  if (d.magX > cal.maxX) cal.maxX = d.magX;
+  if (d.magY < cal.minY) cal.minY = d.magY;
+  if (d.magY > cal.maxY) cal.maxY = d.magY;
+  // 原始 atan2 當扇區索引（offset 只是平移，整圈仍掃過 360°）→ 確認轉滿一圈
+  const ang = (Math.atan2(d.magY, d.magX) * 180 / Math.PI + 360) % 360;
+  cal.sectors |= (1 << Math.floor(ang / (360 / CAL_SECTORS)));
+  const filled = popcount(cal.sectors);
+  setText('cal-cover', Math.round(filled / CAL_SECTORS * 100));
+  renderCalOut(filled);
+}
+
+function calConstants() {
+  const offX = (cal.maxX + cal.minX) / 2, offY = (cal.maxY + cal.minY) / 2;
+  const rX = (cal.maxX - cal.minX) / 2, rY = (cal.maxY - cal.minY) / 2;
+  const avg = (rX + rY) / 2;
+  return { offX, offY, scX: rX > 1e-6 ? avg / rX : 1, scY: rY > 1e-6 ? avg / rY : 1 };
+}
+
+function renderCalOut(filled) {
+  const out = document.getElementById('cal-out');
+  const copy = document.getElementById('cal-copy');
+  if (!out) return;
+  if (!isFinite(cal.minX) || !isFinite(cal.minY)) {
+    out.textContent = '收集中…轉動潛水艇'; if (copy) copy.disabled = true; return;
+  }
+  const c = calConstants();
+  const ok = filled >= CAL_SECTORS;            // 12 扇區全踩過才算轉滿
+  out.textContent =
+    '// 貼進 sensors.cpp（取代 g_offset*/g_scale* 預設值）\n' +
+    'g_offsetX = ' + c.offX.toFixed(3) + 'f;  g_offsetY = ' + c.offY.toFixed(3) + 'f;\n' +
+    'g_scaleX  = ' + c.scX.toFixed(4) + 'f;  g_scaleY  = ' + c.scY.toFixed(4) + 'f;\n' +
+    (ok ? '// ✅ 已轉滿一圈' : '// ⚠ 尚未轉滿一圈，數值可能不準');
+  if (copy) copy.disabled = false;
+}
+
+function initCompassCal() {
+  const ov    = document.getElementById('cal-overlay');
+  const open  = document.getElementById('btn-cal');
+  const close = document.getElementById('cal-close');
+  const start = document.getElementById('cal-start');
+  const reset = document.getElementById('cal-reset');
+  const copy  = document.getElementById('cal-copy');
+  if (!ov || !open) return;
+  const hide = () => { cal.open = false; cal.on = false; ov.hidden = true; if (start) start.textContent = '開始收集'; };
+  open.addEventListener('click', () => { cal.open = true; ov.hidden = false; });
+  if (close) close.addEventListener('click', hide);
+  ov.addEventListener('click', (e) => { if (e.target === ov) hide(); });   // 點背景關閉
+  if (start) start.addEventListener('click', () => {
+    cal.on = !cal.on;
+    if (cal.on) { calReset(); start.textContent = '收集中…（再按停）'; }
+    else start.textContent = '開始收集';
+  });
+  if (reset) reset.addEventListener('click', () => {
+    calReset();
+    setText('cal-cover', 0);
+    const out = document.getElementById('cal-out');
+    if (out) out.textContent = '已重置。按「開始收集」後把艇轉一圈。';
+    if (copy) copy.disabled = true;
+  });
+  if (copy) copy.addEventListener('click', async () => {
+    const out = document.getElementById('cal-out');
+    if (!out) return;
+    try { await navigator.clipboard.writeText(out.textContent); copy.textContent = '已複製 ✓'; }
+    catch (_) { copy.textContent = '複製失敗（手動選取）'; }
+    setTimeout(() => { copy.textContent = '複製常數'; }, 1500);
+  });
+}
+
 // ---------- 啟動 ----------
 // 用 DOMContentLoaded（DOM 解析完即觸發），不要用 window.load——
 // 影像 <img> 是無限 MJPEG 連線，window.load 可能永遠不觸發 → 整支 app 不初始化。
@@ -446,6 +542,7 @@ function boot() {
   initFit();           // 還原影像顯示比例偏好
   initFullscreen();
   initGamepad();
+  initCompassCal();    // 羅盤校準浮層（🧭 校準）
   connectWS();
   window.addEventListener('resize', () => { if (map) map.invalidateSize(); });
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});

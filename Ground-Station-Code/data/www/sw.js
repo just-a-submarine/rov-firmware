@@ -4,7 +4,7 @@
 //  註：http://192.168.4.1 非安全來源，部分瀏覽器不會註冊 SW；註冊失敗無妨，
 //  standalone 仍由 manifest / 全螢幕鈕達成。
 // =============================================================================
-const CACHE = 'rov-gs-v7';   // v7：maxBounds 動態=實際圖磚覆蓋（能滑=看得到）、大湖南補一排
+const CACHE = 'rov-gs-v8';   // v8：羅盤航向上手機（marker 真航向）+ 🧭 校準浮層（轉一圈算 offset/scale）
 const SHELL = [
   '/', '/index.html', '/style.css', '/app.js',
   '/leaflet.js', '/leaflet.css', '/manifest.json', '/icon.svg'
