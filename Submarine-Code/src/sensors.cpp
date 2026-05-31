@@ -23,9 +23,10 @@ bool g_depthOk   = false;
 bool g_inaOk     = false;
 
 // --- 羅盤校正參數（doc/06 §五）---
-// TODO(實機)：水平旋轉 360° 取 X/Y 最大最小值後填入；馬達補償表亦待建。
-float g_offsetX = 0.0f, g_offsetY = 0.0f;   // 硬鐵偏移
-float g_scaleX  = 1.0f, g_scaleY  = 1.0f;   // 軟鐵比例
+// 已實機校正：2026-05-31 板子攤平、水平轉滿一圈，由手機端 🧭 校準收 X/Y min/max 算出。
+// （馬達動態補償 motorComp 仍為 TODO，待實測確認真有需要再建表。）
+float g_offsetX = -0.237f, g_offsetY = -0.135f;   // 硬鐵偏移（圓心）
+float g_scaleX  = 1.0484f, g_scaleY  = 0.9559f;   // 軟鐵比例（橢圓→圓）
 
 // 單顆 18650 開路電壓(OCV) → 剩餘電量(%) 查表。放電曲線非線性，相鄰點線性內插即可。
 // 數值取自典型 18650 靜置電壓對 SoC（中段平、兩端陡）。

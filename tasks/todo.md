@@ -1,3 +1,32 @@
+# TODO — 控制/遙測優先於影像 + 羅盤校正值落地（2026-05-31）
+
+## 背景
+使用者轉一圈得校正常數，要求貼回 `sensors.cpp`；並回報操作有延遲、疑「影像卡到控制/遙測」，
+要求確保控制/遙測優先級最高、影像可降優先權。
+
+## 根因（兩處 FreeRTOS 優先級反轉）
+相機 MJPEG 走 ESP-IDF `esp_http_server`，`HTTPD_DEFAULT_CONFIG()` 預設 `task_priority=5` 且
+`core_id=tskNO_AFFINITY` → 相機 HTTP 任務（pri5）會在 **Core1 搶佔 controlTask（pri3，100Hz）**、
+在 **Core0 搶佔 networkTask（遙測 pri2）**。CPU 層級被影像壓過 → 操控抖動、遙測延遲。
+
+## 待辦
+- [x] sensors.cpp：套用 g_offsetX/Y=-0.237/-0.135、g_scaleX/Y=1.0484/0.9559（手機🧭轉一圈）
+- [x] camera_stream.cpp startHttpServer：`cfg.core_id=0; cfg.task_priority=2`（相機 HTTP 釘 Core0、降優先級）
+- [x] control.cpp startControlTasks：controlTask→pri5、networkTask→pri4（控制(5)≥遙測(4)>相機HTTP(2)>擷取(1)）
+- [x] 編譯驗證：`pio run -e goouuu_esp32s3cam` SUCCESS（RAM 15.9%/Flash 36.0%）
+- [x] 文件：doc/05 §九（排程優先級，v2.8）、doc/06 §五（實機校正值，v2.11）、CONTEXT.md
+- [x] 燒錄 COM6（`--upload-port COM6`，Hash verified、MAC `…e0:b8` 核對 ROV、開機 log 正常）
+- [ ] 現場實測操控延遲是否消除（需手機實機操作；序列埠只能證明有開機/不當機）
+- [ ] （備援）若仍卡頓：streamTask 加發佈幀率上限（≤15fps）降 airtime，不影響 SD 錄影
+
+## Review
+- 修兩處優先級反轉（核綁定＋降優先級），是「影像降優先權」的根因正解；controlTask 獨佔 Core1 不再被相機搶佔。
+- airtime 仍共用同頻道（經 GS-AP 轉發＝雙倍）；CPU 解了，頻寬槓桿（幀率上限）備而未用、先測再加（doc/05 §九）。
+- 驗證：build SUCCESS、ROV 已燒 COM6（MAC 核對、開機正常）；操控延遲是否消除待現場手機實測（本機 USB 網卡連不上 ROV_GS）。
+- 本次經使用者授權提交並推送。
+
+---
+
 # TODO — 電子羅盤航向上手機 + 完整自動校準（2026-05-30）
 
 ## 背景

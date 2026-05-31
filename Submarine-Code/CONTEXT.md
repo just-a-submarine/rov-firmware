@@ -66,8 +66,8 @@
 ## 待實機填入 / 調整（程式內以 `// TODO(實機)`）
 - `config.h` `GS_AP_MAC`：地面站 AP MAC。**未填前 ESP-NOW 控制/遙測不通**。
   （ROV 開機序列會印出自己的 STA MAC，給地面站 peer 用。）
-- `sensors.cpp` 羅盤校正：`g_offsetX/Y`、`g_scaleX/Y` 仍預設（0/1）→ **用手機「🧭 校準」轉一圈**
-  得常數後貼回重燒（流程見下方變更紀錄 / `doc/06 §五`）。
+- ~~`sensors.cpp` 羅盤校正~~ **✅ 已校正（2026-05-31）**：板攤平、手機「🧭 校準」轉滿一圈算得
+  `g_offsetX/Y=-0.237/-0.135`、`g_scaleX/Y=1.0484/0.9559`，已貼回 `sensors.cpp`、編譯 SUCCESS、已燒 COM6。
 - 羅盤兩個未實作項（見 `doc/06 §五`）：
   - `HEADING_OFFSET_DEG` 單一常數＝**裝設水平旋轉角＋磁偏角**（台北西偏 ~4.5°）；在 `getCorrectedHeading()` 末端加上、對 360° 取模。
   - `motorComp`（馬達動態干擾補償）：**先測再做**——艇固定比較「馬達關 vs 滿油門」航向漂多少，漂小不必補、能拉開距離優先；
@@ -82,6 +82,14 @@
 序列觀察感測器數值。正式運行請關閉此旗標（純 STA 連地面站）。
 
 ## 操控 / 感測修正（2026-05-29，依手機實測回饋）
+- **🚦 控制/遙測優先於影像 ＋ 羅盤校正值落地（2026-05-31）**：使用者回報操作有延遲、疑影像卡到控制。
+  - **根因＝兩處優先級反轉**：相機 MJPEG 的 `esp_http_server` 預設 `task_priority=5` 且 `core_id=tskNO_AFFINITY`
+    → 會在 **Core1 搶佔 `controlTask`（100Hz 控制迴圈）**、在 **Core0 搶佔 `networkTask`（ESP-NOW 遙測）**。
+  - **修法**：`startHttpServer` 加 `cfg.core_id=0; cfg.task_priority=2`（相機 HTTP 釘 Core0、降優先級）；
+    `startControlTasks` 把 `controlTask` 升 **pri5**、`networkTask` 升 **pri4**。最終 控制(5)≥遙測(4)>相機HTTP(2)>擷取(1)。
+  - **羅盤校正常數已套用**（見上「待實機」）。編譯 SUCCESS（RAM 15.9%/Flash 36.0%）、已燒 COM6（MAC `…e0:b8` 核對為 ROV、開機 log 正常）。
+  - **airtime 備註**：相機與 ESP-NOW 共用同頻道（且經 GS-AP 轉發＝雙倍 airtime）。上述只解 CPU 搶佔；
+    若實測仍因頻寬卡頓，下一槓桿＝`streamTask` 對發佈幀率設上限（≤15fps，不影響 SD 錄影）。**先測再加**（`doc/05 §九`）。
 - **左馬達反槳**：`config.h LEFT_MOTOR_INVERT=1`，於 `motors.cpp setLeftMotor()` 反向電氣命令，
   使「正命令＝與右馬達同向推力」。同時涵蓋手動差速與自動導航（都走 setLeftMotor）。改正槳設 0。
 - **急停可恢復**：`emergencyStop()` 會拉低 MCP 的 EN 腳；舊版解除後不再 `enableMotors()`，

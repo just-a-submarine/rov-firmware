@@ -107,6 +107,11 @@ void startHttpServer() {
     cfg.server_port = 80;
     cfg.ctrl_port   = 32768;
     cfg.lru_purge_enable = true;
+    // 影像降優先權（控制/遙測優先）：HTTPD 預設 task 優先級=5 且無核綁定（tskNO_AFFINITY）→
+    // 會在 Core1 搶佔 controlTask(pri5 前為3)、在 Core0 搶佔 networkTask(遙測)。改釘 Core0 並降到
+    // pri2，讓控制迴圈與 ESP-NOW 遙測永遠先於相機串流取得 CPU（doc/05 §排程優先級）。
+    cfg.core_id       = 0;
+    cfg.task_priority = 2;
     if (httpd_start(&g_httpd, &cfg) != ESP_OK) { log_e("httpd_start 失敗"); return; }
 
     httpd_uri_t stream = {"/stream", HTTP_GET, streamHandler, nullptr};

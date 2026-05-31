@@ -122,6 +122,9 @@ void networkTask(void*) {
 }  // namespace
 
 void startControlTasks() {
-    xTaskCreatePinnedToCore(controlTask, "Control", 8192, nullptr, 3, nullptr, 1);
-    xTaskCreatePinnedToCore(networkTask, "Network", 8192, nullptr, 2, nullptr, 0);
+    // 優先級（doc/05 §排程優先級）：控制(5) ≥ 遙測(4) > 相機HTTP(2) > 相機擷取(1)。
+    // controlTask 獨佔 Core1（相機 HTTP 已釘 Core0，不再搶佔控制迴圈）；
+    // networkTask 在 Core0 高於相機，確保 ESP-NOW 控制/遙測不被 MJPEG 串流卡住。
+    xTaskCreatePinnedToCore(controlTask, "Control", 8192, nullptr, 5, nullptr, 1);
+    xTaskCreatePinnedToCore(networkTask, "Network", 8192, nullptr, 4, nullptr, 0);
 }
