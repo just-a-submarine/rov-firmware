@@ -82,6 +82,27 @@
 序列觀察感測器數值。正式運行請關閉此旗標（純 STA 連地面站）。
 
 ## 操控 / 感測修正（2026-05-29，依手機實測回饋）
+- **✅ 影像「持續中斷」真因＝OV5640 非決定性冷啟動 wedge（與訊號無關，已加自癒，2026-06-06）**：
+  換新 GS 板把 RF 修好後（rssi −36/−27、stations/haveTelem 穩），影像仍持續中斷。**非 RF**：遙測（ESP-NOW、connectionless）
+  與影像（MJPEG/TCP，經 GS-AP 轉發＝雙跳 airtime）是兩條不同路徑。
+  - **非侵入定位**：GS COM9 的 DIAG 已含 `cam(影格)=cameraFrameSeq` ＋對 `192.168.4.100/stream` 探測。實測 `cam` 硬凍住
+    （0/51/72/0 後不動）、`/stream` 回 **HTTP 500**（＝`g_camDead`）→ 相機開機後跑幾秒就 wedge，**不必動到開埠會 reset 的 ROV COM8** 即可判定是相機。
+  - **根因**：`CAM_PIN_PWDN/RESET=-1`（Freenove 腳位未拉到 GPIO）→ sensor 冷啟動非決定性；疊加 FPC 接觸邊際。同硬體每次結果不同＝
+    需要的 reinit 次數在擲骰子。LEDC timer 已讀碼排除（相機 ch7/timer3 vs 馬達 ch0–5/timer0–2 不撞）。
+  - **修法（camera_stream.cpp）**：把「開機/執行期試 3 次就**永久判死閒置**」改成**持續背景重試自癒**——`g_camDead` 期間反覆
+    `reinitCamera()`（退避 1→5s），相機一吐幀就清旗標續傳，**不必拔電**。
+  - **已驗證（燒 COM8）**：冷啟動 wedge（`cam` 凍 84）**自動恢復**、`cam` 爬到 800+ 不再凍；`haveTelem=1`、控制/遙測全程不受影響。
+    治本仍是硬體（FPC 接觸／RESET 接 GPIO）。
+- **🎚 相機調參：整包覆蓋失敗→還原→極簡提亮（2026-06-07）**：
+  - 曾加 `applyCamTuning()` 整包覆蓋（~18 個 setter）想更清晰，結果**比原廠預設更暗**；接連調
+    `gainceiling` 4X→16X→32X、`ae_level`+2、`brightness`+2 都拉不回。**根因＝手動覆蓋 OV5640 原廠自動值這條路本身錯了**
+    （esp32-camera 多個 setter 互相干擾、淨效果變暗），不是某個數值。先**整段移除還原為 git HEAD 原始狀態**，使用者確認「原始很好」。
+  - 之後使用者要「再稍微亮、暗處還是有點暗、怕亮的太亮」→ **改成極簡版只動兩旋鈕**（其餘曝光/增益/白平衡仍全交原廠自動）：
+    `set_brightness` + `set_contrast(s, -1)`（**降對比＝抬暗部、壓亮部**，正好解「暗處太暗」又避免「亮的太亮」）。
+    setup 與自癒 `reinitCamera` 都套用（sensor reset 會回預設，須每次重設）。
+  - **使用者再要更亮 → `brightness` +1→+2（已達上限）、`contrast` 維持 -1**。**現值＝brightness +2 / contrast -1，其餘原廠**。
+    已編譯+燒 COM8 SUCCESS，待目視。若仍不夠亮（brightness 已到頂）→ 只能碰曝光：單獨 `set_ae_level(+1~+2)` 提高自動曝光目標，
+    或最後手段關 AEC 改手動 `set_aec_value` 固定長曝光（動態會拖影）；切忌再整包覆蓋。⚠ 教訓見 lessons（看不到畫面別盲調、一次一旋鈕）。
 - **🚦 控制/遙測優先於影像 ＋ 羅盤校正值落地（2026-05-31）**：使用者回報操作有延遲、疑影像卡到控制。
   - **根因＝兩處優先級反轉**：相機 MJPEG 的 `esp_http_server` 預設 `task_priority=5` 且 `core_id=tskNO_AFFINITY`
     → 會在 **Core1 搶佔 `controlTask`（100Hz 控制迴圈）**、在 **Core0 搶佔 `networkTask`（ESP-NOW 遙測）**。
@@ -101,6 +122,16 @@
   ③ 顯示值「立即下降、僅 `BATTERY_RISE_PCT_S`/s 緩升」防彈跳。
   電壓來源：INA260 `readBusVoltage()`（電流計即可量匯流排電壓）。
   功率：INA260 `readPower()` 暫存器（實測 V×I），非假設 12V。
+- **🔋 INA260 電流計：USB 純供電（無電池）時 init 失敗 → 遙測 cur/power/bat 全是假 0（2026-06-05 實測）**：
+  開機 log `[E] INA260 初始化失敗（0x40，I2C 無回應）` + `感測器狀態：compass=1 depth=1 ina260=0`。
+  `readAllSensors` 只在 `g_inaOk` 才寫 `currentA/powerW/batPct`，故 init 失敗時三者保持預設 0（**不是量到 0，是沒量**）。
+  - **研判**：同 I2C 匯流排的羅盤(0x2C)/深度(0x76)都 ACK → 匯流排健康；單 INA260 0x40 不回應，最可能＝
+    **INA260 供電取自電池/馬達匯流排**，桌面 USB 無電池時整顆沒電 → 不 ACK。佐證：先前**接電池**場次 `bat=88~99%` 讀得到真值
+    （晶片/位址/程式碼都正確、之前會動）。
+  - **✅ 已確認（2026-06-06）**：接電池後開機 `感測器狀態：compass=1 depth=1 ina260=1`、遙測 `bat=77% cur=0.01A`（真值）。
+    印證研判正確＝INA260 取電自電池匯流排，桌面純 USB 無電池時才不 ACK。晶片/位址/接線都正常，非故障。
+  - **診斷可見性修復（sensors.cpp）**：把「感測器狀態行＋INA260 V/I/P」移到 **GPS `gpsSerial.begin(43/44)` 接管 UART0 console 之前**印、
+    並留 `delay(120)` 排空 FIFO；否則啟用 GPS 的板子在 CH340 永遠看不到該行（GPS 一 begin 就切斷 console、半行截在 `Wire.cpp:296 b`）。
 - **STA 發射功率**：`comms.cpp` 加 `esp_wifi_set_max_tx_power(84)`（~20dBm）改善弱訊號。
 - **WiFi 斷線自癒 watchdog**：`comms.cpp wifiReconnectWatchdog()`（networkTask 每圈呼叫）——
   STA 被 deauth/干擾後會卡死不自動重連（實測：地面站手把那波 deauth 後 ROV 一直 -127、需重置才好）。
@@ -150,6 +181,18 @@
   （或 `python -m esptool --port COM6 --after hard_reset run` 讓它跑）。
   「訊號」遙測＝潛水艇 STA 看 GS AP 的 `WiFi.RSSI()`；`-127`＝當下未關聯（ESP-NOW 免關聯仍通）。
   弱訊號根因疑為板上「板載/IPEX 天線二選一」0Ω 電阻未切對 → 待實機檢查。
+- **🛰️ 「地面站掃描/連線時好時壞」整起間歇案——根因＝天線餘裕不足（2026-06-06 證實）**：
+  - **量到的證據**：ROV 貼在 GS 旁（~20cm）關聯，GS 端 `sta0(ROV) rssi=-71`、ROV 自量 `rssi=-69`。
+    20cm 正常該 -30~-40，**整整少 30~40dB**，與 `comms.cpp:175` 註解「~20cm 仍 <-65 → 疑天線(0Ω)不良」吻合。
+  - **ESP-NOW 連動性的真相**：ROV 純 STA（`comms.cpp`），ESP-NOW `peer.channel=0`＝跟隨本機頻道。
+    ROV 只有**關聯上 AP 後**才落到 ch1，ESP-NOW 才送得到 GS。故 `haveTelem=0` 與 `stations=0` 是**同一件事**＝ROV 沒關聯。
+  - **解釋使用者觀察「ESP-NOW 通＝手機才掃得到 AP」**：非因果，是**共同原因**。AP 開機就無條件 beacon（`softAP OK` 早於 ESP-NOW），
+    但天線爛、有效範圍貼著關聯懸崖（~-80）；條件好時 ROV 關聯**且**手機掃得到（一起成立），條件差時兩者一起失敗。
+  - **韌體槓桿已用盡**：ROV `max_tx_power(84)`、GS `max_tx_power(80)`＋HT20＋關省電。剩 30~40dB 缺口屬硬體天線。
+  - ✅ **2026-06-06 結案＝壞的是 GS 那片天線**：使用者把舊 GS 天線搞爆、換新 GS 板（COM9）。同一份韌體、只換 GS 板，
+    近距 RSSI 由 **-71/-69** 跳到 **GS聽ROV=-36 / ROV聽GS=-27**（改善 ~35dB），`stations=1 haveTelem=1` 每週期穩定、零掉線。
+    先前「0Ω/IPEX」推論收斂於此。**ROV 端零改動就接上**——GS 韌體已把 AP MAC 釘死成 ROV 寫死的 `14:C1:9F:29:EA:AD`
+    （見 GS `CONTEXT.md` 2026-06-06 紀錄），故 `include/config.h` 的 `GS_AP_MAC` 不必動。
 
 ## 驗證進度
 - [x] 編譯通過（core 3.x / pioarduino），正式版 + 單機版
@@ -168,7 +211,12 @@
   badge 變紅本身即證明往返成功。SD 開機掛載成功（無「未就緒」警告）→ 兩者都實際寫檔。
   ⚠ 注意：**錄影模式(RB 紅)下 LB 不會拍照**（拍照僅純串流模式）。
 - [x] GPS 版（UART1@43/44）燒錄開機正常、無崩潰循環
-- [ ] GPS 實測：接模組 + 天空視野取得定位，遙測帶出 lat/lng（需原生 USB 偵錯）
+- [⚠] **GPS 實測（2026-06-07）：模組 #1 確認壞、待換**。廣闊天空下 `charsProcessed=0`（零 NMEA）。
+  逐項排除：接線 TX→43/RX→44 與韌體一致、swap 韌體 RX=44 仍 0（非極性）、共地正常（GPS GND↔RX≈3V）、
+  VCC 4V+ 充足、紅 PWR LED 亮；**但 GPS TX 對地僅 0.1V(接ESP)/~1V(拔離)，到不了 idle-high ~3.3V＝模組沒在驅動 TX**。
+  → 換新模組再測。診斷手法：**ROV 原生 USB COM8 app 接手後抓不到 steady-state**（只有 boot log），
+  改把 `charsProcessed/衛星數/passedChecksum` 暫時夾帶進遙測 `depth/cur/bat` 欄位、讀超穩的 **GS COM9 DIAG**
+  （同相機 cam 借 navDistanceM）；判完已全部移除、真值還原。見 memory `rov-gps-module-dead-tx-not-driving`。
 - [ ] 馬達（離水、低工率）與緊急停車
 - [ ] 錄影 .avi 可播放性
 - [ ] 與地面站整合（ESP-NOW 遙控、遙測、航點導航）
