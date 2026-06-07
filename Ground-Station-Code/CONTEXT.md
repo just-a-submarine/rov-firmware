@@ -182,8 +182,23 @@ WebSocket 指數退避重連。
   地面站急停 latch 時手機顯示紅色閃爍橫幅。
 - **分頁佈局（科技風）**：常駐頂列 HUD（GS/PAD/CAM 狀態燈 + 模式 + 全螢幕）+ 常駐遙測 HUD（狀態監控）
   + 分頁切換〔影像〕〔航點/地圖〕，解決三區擁擠。青藍霓虹、等寬發光數字、影像 HUD 角框。
-- **手把（控制上行）**：`app.js` 用 Gamepad API 輪詢（~25Hz），送 `{"t":"c",lx,ly,ry,b}` 經 ws 上行。
+- **手把（控制上行）**：`app.js` 用 Gamepad API 輪詢（~25Hz），送 `{"t":"c",lx,ly,ry,b,auto,ts}` 經 ws 上行。
   手把配對到「手機」（非 GS）。位元：bit0=A..3=Y,4=LB,5=RB,6=Start,7=Back。
+- **📷 拍照要連按好幾下＝25Hz 取樣漏短按（2026-06-07 修，已 uploadfs）**：`controlTick` 每 40ms 取樣送出「當下」
+  `touch.b`；點擊比一個取樣週期短 → bit 在兩 tick 間 set→clear 完全沒被取樣 → GS 收不到上升邊緣 → 不拍照。
+  修法：動作鍵（拍照/錄影/燈）改 `pulsePress/pulseRelease`，按下保證 bit 維持 `PULSE_MS=120ms`（≥3 個取樣週期）
+  → 上行必取樣到、GS 100Hz 邊緣偵測必觸發一次。toggle 鍵（燈/錄影）拉長不會重複（GS 只認上升邊）。
+  （ROV 端配套：`takePhotoInstant` 只在真寫檔成功才回 `photoAck` → toast 誠實，見 ROV `CONTEXT.md`。）
+- **📷 第二輪：拍照改單調序號 + 即時快門（2026-06-07，已燒錄 fw+fs、開機 stations=1/haveTelem=1）**：實機回報仍要連按、且要更利索。
+  根因＝**回饋慢**（「已存檔」走 5Hz 遙測 ack ~400ms 才回，看不出拍到沒就猛按）**＋ latch 讓快速連點合併成一張**。
+  改法：**拍照不走 bit/邊緣，改單調序號** `photoSeq`——手機每按一下 `+1`、夾帶每筆 `controlTick`（`ph` 欄），
+  `web_server`→`gamepadSetPhotoSeq`→ControlPacket `photoSeq`（**取代 `bool takePhoto`，同 1 byte 仍 16B**），ROV 序號一變就拍一張
+  （TCP 保證手機→GS 不丟、GS 100Hz 持續補送 → 任何取樣率/丟包都漏不掉、連點不合併）。燈/錄影仍走 `pulse` bit（toggle 合併無害）。
+  手機端 `triggerPhoto()` 同時 `flashShutter()`＝**全螢幕即時快門閃**（按下當下本地回饋、不等 ROV ack）→「一按就拍」。
+  **⚠ 與舊 ROV 不可混燒**（舊版讀該 byte 為 `takePhoto`、序號恆非 0 → 100Hz 狂拍）→ ROV+GS 必須一起重燒。
+- **🕐 照片/影片時間 1980 修（2026-06-07）**：ROV 無 RTC/NTP（GPS 亦壞）。手機在 `{t:'c',...}` 加 `ts`(UTC 紀元秒)
+  → `web_server` WS 解析存 `gamepadSetEpoch` → `control.cpp` 填 ControlPacket 新欄 `epochS` → ROV 收到設一次系統時鐘。
+  **ControlPacket 12→16B**：`main/packets.h` 與 ROV `include/packets.h` 已逐位元組同步，**兩端必須一起重燒**（否則長度不符＝控制全失）。
 - **螢幕虛擬搖桿（2026-06-07，無手把也能操控）**：`app.js` 把 `pollAndSendGamepad` 重構成 `controlTick`
   （手把/虛擬二擇一，送出完全相同的 `{t:'c',...}`，GS 端零改動）。`firstGamepad()` 有偵測到手把就用手把值並
   把虛擬鈕 `#touch-ctl` 隱藏，否則送虛擬值。版面（2026-06-07 重排）：影像縮中央矩形（`object-fit:contain` 不拉伸），

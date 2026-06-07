@@ -1,5 +1,44 @@
 # Lessons（踩坑與教訓）
 
+## 2026-06-07（日）— 錄影全黑：沒實機也能查證——把韌體邏輯 port 到 PC + 用相鄰功能反推根因
+
+### 重現不出來就「把那段邏輯搬到 PC、用真工具當裁判」，別靠臆測
+- **症狀**：SD 錄影 `.avi` 全黑，但拍照正常、檔案有寫進去。手邊只有韌體碼，沒有實機那支檔。
+- **做法**：把 `recorder.cpp` 的 `writeAviHeader/writeFrame/writeIdx1/stopRecording` **逐行 port 成 Python**，
+  用 Pillow 產真 JPEG 影格，輸出「現況 buggy」與「修正 fixed」兩支 `.avi`，再用 **ffmpeg/ffprobe** 當 ground truth。
+  又寫 `check_idx.py` 直接驗 idx1 每筆偏移 `movi_anchor+off` 是否落在 `00dc`：**buggy 0/10 命中、fixed 10/10**。
+- **真因**：idx1 `dwChunkOffset` 每筆 +4（舊式 `pos-moviOffset-4`，少跳過 "LIST"+size）→ 全指進 JPEG 長度欄；
+  header 又設 `AVIF_HASINDEX` → 信任索引的播放器 seek 到垃圾 → 整支黑。**修正＝對齊 'movi' FourCC：`pos-(moviOffset+8)`**。
+- **教訓**：① 純演算法/格式 bug 不需要實機就能 100% 重現＋驗證，host 重現比「燒進去人眼看」快上百倍且可回歸。
+  ② ffmpeg/VLC 太寬容（會重掃壞索引）→ **不能拿它當「嚴格播放器」的代理**；要直接驗結構（idx 命中率），別只看「它能不能播」。
+
+### 用「相鄰且正常的功能」反推，避免亂槍打鳥
+- **ESP32-CAM 錄影全黑**網路上最常見另一說＝MJPEG 影格缺 DHT（Huffman 表）。差點順手加 DHT 注入。
+- **反推**：拍照存的是**同一份 `fb->buf`**，而使用者說**照片正常打得開**＝那份 JPEG 有效 → 錄影畫格本身沒問題
+  → 黑一定純在容器（idx1），**不需要 DHT 注入**。一個 deduction 省掉一條歧路＋避免過度設計（CLAUDE.md 最小影響）。
+- 教訓：動手前先問「有沒有一個已知正常的相鄰功能能幫我排除一半假設？」往往比多寫一段防禦碼更值。
+
+### 一次性按鍵走「邊緣觸發」時，當心上下游取樣率把短按吃掉
+- **拍照要連按好幾下** 根因不在 ROV（GS 100Hz 取樣綽綽有餘），在**手機 25Hz**（`controlTick` 40ms）取樣送「當下」bit：
+  比 40ms 短的點擊在兩 tick 間 set→clear 完全沒被取樣 → GS 永遠看不到上升邊緣。修法＝按下後**latch 最短脈衝寬 120ms**
+  保證上行必取樣到。另 `takePhotoInstant` 開檔失敗也回 `photoAck`＝**假成功提示**，改成只在真寫檔成功才 ack。
+- 教訓：edge-trigger 的可靠度由「整條鏈路最慢的取樣率」決定；要嘛 latch 夠寬、要嘛改用單調計數器（counter）讓任何環節都漏不掉。
+
+### 第二輪（實機回測後）——快轉是「宣告 fps≠實測 fps」；連按的真痛點其實是「回饋慢」
+- **影片快轉**：AVI header 寫死宣告 15fps，但實際擷取率被 SD 寫入＋streamTask 最低優先壓到更低 → 同張數標 15fps 播太快。
+  修法＝`stopRecording` 用**整段實測 fps**（影格數/總時間）回補 avih `dwMicroSecPerFrame` 與 strh `dwScale/dwRate`。
+  host 驗證：宣告 15fps/真 5fps（10 影格/2s）→ ffprobe duration 0.67s（3×快轉）→ 修正後 2.0s。
+  教訓：**不要寫死「目標 fps」當「實際 fps」**；非等時來源（受 IO/排程影響）一律「邊錄邊量、停止時回補真值」。
+- **連按的真因升級**：第一輪 latch 已修「取樣漏短按」，但使用者仍要連按——**因為回饋走 5Hz 遙測 ack（~400ms）才回，
+  看不出有沒有拍到就猛按**，而 latch 又把快速連點合併成一張（更像沒反應）。
+  修法兩刀：① 觸發改**單調序號**（漏不掉、連點不合併）；② **即時本地快門閃**（按下當下就閃，不等 ROV ack）→「一按就拍」。
+  教訓：使用者說「要按好幾下」未必是真的漏觸發——**先分清是『沒觸發』還是『沒回饋』**。即時的本地回饋常比把端到端延遲再壓低更有效、更省事。
+
+### 改了同尺寸欄位（`bool takePhoto`→`uint8_t photoSeq`）＝位元組相容但語意不相容，務必兩端一起燒
+- 兩者都 1 byte、ControlPacket 仍 16B，**舊韌體不會解析錯位**——但舊 ROV 把該 byte 讀成 `takePhoto` bool，
+  而 `photoSeq` 第一次按後**恆非 0** → 舊 ROV 每個 100Hz 控制封包都看成 `takePhoto=true` → **狂拍**。
+  教訓：封包欄位「同大小」只保證 layout 不錯位，**不保證語意相容**；換語意一定要兩端同版本一起部署，CONTEXT 標「不可混燒」。
+
 ## 2026-06-07（日）— 相機「調更清晰」反而越調越暗：別覆蓋 OV5640 原廠預設、看不到結果別盲調
 
 ### 🚨 OV5640 原廠自動值已夠好，手動覆蓋一堆 sensor setter 來「提清晰/提亮」是反模式

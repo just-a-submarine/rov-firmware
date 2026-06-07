@@ -175,6 +175,29 @@
   直接把目前串流最新影格（SVGA）寫 SD，**零延遲、不中斷畫面**。GS 端 LB 已邊緣觸發（按一下一張）。
   - 診斷工具（已留）：`WIFI_DIAG` 下 streamTask 每 2s 印 `[CAM] ok/null/big/seq`；
     遙測借 `navDistanceM` 回傳影格數（手動模式），GS COM4 DIAG 印 `cam(影格/-1停用)`。
+- **🎬 錄影全黑 + 拍照連按 + 時間 1980 三修（2026-06-07，已燒錄 COM8/COM9 hash verified）**：
+  - **錄影 .avi 全黑＝idx1 偏移每筆 +4（純容器 bug）**：`recorder.cpp:writeFrame` 舊式 `position-g_moviOffset-4`
+    讓 idx1 的 dwChunkOffset 全部指進 JPEG 長度欄而非 `00dc` 標記；header 又設 `AVIF_HASINDEX`，**信任索引的播放器
+    seek 到垃圾 → 整支黑**（ffmpeg/VLC 靠重掃才倖存）。改 `position-(g_moviOffset+8)`（對齊 'movi' FourCC）。
+    **PC 端 host 重現驗證**（無需實機）：port `recorder.cpp` 邏輯成 Python，舊式 idx **0/10** 命中、新式 **10/10** 命中、
+    ffmpeg 解出全部影格。**畫格本身沒問題**（拍照存的是同一份 `fb->buf`，照片正常＝JPEG 有效），故**不需 DHT 注入**。
+  - **拍照要連按好幾下＝手機 25Hz 取樣漏掉短按**（根因在 GS/手機，非 ROV）：見 GS `CONTEXT.md`。ROV 端同步修
+    `takePhotoInstant`：**只有真的寫檔成功才 `g_photoAck=true`**（舊版 `SD_MMC.open` 失敗也回 ack＝假「已存檔」提示）。
+    → 答使用者問：toast 現在誠實可信，一下即可，不必盯著提示連按。
+  - **照片/影片時間恆 1980＝系統時鐘從未設**（無 RTC/NTP、GPS 模組壞）→ FAT 起始紀元。新增鏈路：手機送
+    `ts`(UTC 紀元秒)→WS→GS→ControlPacket 新欄 `epochS`→ROV `applyControl` 收到設一次 `settimeofday`；`main.cpp` 開機
+    `setenv("TZ","CST-8")`→FatFs `get_fattime` 走 localtime → 新檔顯台灣本地時間。**ControlPacket 12→16B，兩端 `packets.h` 已同步**。
+  - **✅ 實機回饋（2026-06-07）：換播放器後 .avi 可播、檔案時間正確**＝idx1 與時鐘修正成立。
+- **🎬 第二輪（2026-06-07，已燒錄 COM8/COM9 hash verified、開機 ESP-NOW 遙測正常）：影片快轉 + 拍照即時利索**：
+  - **影片快轉＝宣告 fps 假**：header 寫死 15fps，但實際擷取率（SD 寫入＋streamTask 最低優先）低於 15 → 同張數標 15fps
+    播太快。修法：`recorder.cpp` 記 `g_recStartMs`，`stopRecording` 用**整段實測 fps**（影格數/秒）回補 avih
+    `dwMicroSecPerFrame`＋strh `dwScale/dwRate`。**host 驗證**：宣告 15fps、真 5fps（10 影格/2s）→ ffprobe duration
+    由 0.67s（3× 快轉）修正為 2.0s（real-time）。
+  - **拍照要連按＝回饋慢＋連點被合併**（第一輪 latch 修了取樣漏，但回饋走 5Hz 遙測 ack ~400ms 才回 → 看不出拍到沒就猛按，
+    且 latch 讓快速連點合併成一張）。**改單調序號**：手機每按一下 `photoSeq+1` 夾帶每筆上行，**ROV 序號一變就拍一張**
+    （`applyControl` 比對，免邊緣偵測→任何取樣率/ESP-NOW 丟包都漏不掉、連點不合併）。**ControlPacket 把 `bool takePhoto`
+    換成 `uint8_t photoSeq`（同 1 byte，仍 16B）**，兩端 `packets.h` 已同步。手機端加**即時快門閃光**（按下當下本地閃，不等 ack）。
+    **⚠ 新舊不可混燒**：舊 ROV 把該 byte 讀成 `takePhoto` bool、序號恆非 0 → 會 100Hz 狂拍 → 兩端必須一起重燒。
 - **天線診斷**：`WIFI_DIAG`（config.h，預設 1）每 2s 印 STA 狀態/RSSI/通道/IP/TX。
 - **相機 XCLK LEDC**：改用 `LEDC_CHANNEL_7/TIMER_3`，避開馬達 `ledcAttach` 佔用的 ch0–5（原本相機用 ch0 與左馬達衝突）。
   ⚠ 原生 USB(COM6) `pio upload` 後常卡下載模式靜默 → 改從 GS COM4 看 ROV 自量 RSSI 較可靠
@@ -218,7 +241,8 @@
   改把 `charsProcessed/衛星數/passedChecksum` 暫時夾帶進遙測 `depth/cur/bat` 欄位、讀超穩的 **GS COM9 DIAG**
   （同相機 cam 借 navDistanceM）；判完已全部移除、真值還原。見 memory `rov-gps-module-dead-tx-not-driving`。
 - [ ] 馬達（離水、低工率）與緊急停車
-- [ ] 錄影 .avi 可播放性
+- [⚠] **錄影 .avi 可播放性（2026-06-07）**：idx1 偏移 bug 已修並 **host 重現驗證**（buggy 0/10→fixed 10/10 命中、
+  ffmpeg 解出全部影格）、已燒錄 COM8。**待使用者錄一段新 clip 拉出 SD 確認實機播放器能播**（舊檔仍是壞索引、會黑，要用新韌體重錄）。
 - [ ] 與地面站整合（ESP-NOW 遙控、遙測、航點導航）
 
 ## 正式版（STA）連線測試結果（2026-05-29，COM6）
