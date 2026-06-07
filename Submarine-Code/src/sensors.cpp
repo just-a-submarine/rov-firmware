@@ -101,17 +101,27 @@ bool setupSensors() {
 
     // INA260 電流計
     g_inaOk = ina260.begin(ADDR_INA260, &Wire);
-    if (!g_inaOk) log_e("INA260 初始化失敗（0x%02X）", ADDR_INA260);
+    if (!g_inaOk) {
+        log_e("INA260 初始化失敗（0x%02X，I2C 無回應）", ADDR_INA260);
+    } else {
+        // 初始化即讀一次，確認不只 ACK、暫存器也讀得到（USB 供電無電池時 V/I≈0 屬正常）。
+        log_i("INA260 OK：V=%.3fV  I=%.1fmA  P=%.1fmW",
+              ina260.readBusVoltage() / 1000.0f, ina260.readCurrent(), ina260.readPower());
+    }
+
+    // ⚠ 感測器狀態行必須在 GPS 接管 GPIO43/44（=CH340 console 腳）之前印，否則啟用 GPS 的板子
+    //   永遠在 CH340 看不到它（GPS 一 begin 就切斷 UART0 console 並沖掉 FIFO，半行截斷）。
+    log_i("感測器狀態：compass=%d depth=%d ina260=%d", g_compassOk, g_depthOk, g_inaOk);
 
     // GPS：UART1 @ GPIO43/44（見 config.h 對 CH340 腳位衝突的說明）
 #ifdef ENABLE_GPS
+    delay(120);   // 讓上面的狀態/診斷行排空到 CH340，再讓 UART1 接管 43/44
     gpsSerial.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
     log_i("[sensors] GPS(UART1) 啟用 @43/44");
 #else
     log_w("[sensors] GPS 停用（config.h ENABLE_GPS 未開）");
 #endif
 
-    log_i("感測器狀態：compass=%d depth=%d ina260=%d", g_compassOk, g_depthOk, g_inaOk);
     return g_compassOk && g_depthOk && g_inaOk;
 }
 

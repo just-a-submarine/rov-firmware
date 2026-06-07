@@ -100,7 +100,17 @@ int computeVertMotor(float currentDepthM, int rightStickInput) {
         return constrain(rightStickInput, -PWM_MAX, PWM_MAX);
     }
 
-    // 放開 → PID 維持深度
+    // 未達入水門檻（水面/空中）→ 不做深度保持：歸零並清 PID 狀態。
+    // 在空氣中 PID 永遠達不到目標深度 → 積分捲繞(windup) → 垂直馬達會自己越轉越快
+    // （桌面通電/放開搖桿/解除急停後尤明顯）。下次入水再重新捕捉保持點。
+    if (currentDepthM < DEPTH_HOLD_MIN_M) {
+        g_holdInit    = false;
+        g_depthOutput = 0;
+        depthPID.Reset();          // 清 pTerm/iTerm/dTerm/outputSum，杜絕 windup
+        return 0;
+    }
+
+    // 已入水且放開搖桿 → PID 維持深度
     if (!g_holdInit) { g_depthSetpoint = currentDepthM; g_holdInit = true; }
     depthPID.Compute();
     return (int)g_depthOutput;

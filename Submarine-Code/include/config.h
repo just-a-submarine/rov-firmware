@@ -56,7 +56,8 @@ static const uint8_t GS_AP_MAC[6] = {0x14, 0xC1, 0x9F, 0x29, 0xEA, 0xAD};  // �
 // ⚠ 本板 CH340 偵錯線（COM3）接在 GPIO43/44。啟用 GPS 後 43/44 改由 UART1 驅動，
 //   CH340 偵錯失效 → 必須改用 S3「原生 USB」連線偵錯/燒錄（log 會自動導到原生 USB）。
 //   GPS 走 UART1（非 UART0），不會再像舊版那樣重設主控台而開機崩潰。
-#define ENABLE_GPS      1                 // 啟用 GPS（需改接 S3 原生 USB 偵錯）
+// #define ENABLE_GPS   1                 // GPS 模組 #1 已壞，先停用（2026-06-07）。換新模組後取消註解即復活；
+                                          // 導航/航點/地圖/遙測封包皆不依賴此旗標，停用不影響它們。
 #define GPS_RX_PIN      43                // ← Neo-M8N TX（doc/03）
 #define GPS_TX_PIN      44                // → Neo-M8N RX
 #define GPS_BAUD        9600
@@ -105,6 +106,9 @@ static const uint8_t GS_AP_MAC[6] = {0x14, 0xC1, 0x9F, 0x29, 0xEA, 0xAD};  // �
 #define DEPTH_KI            0.5f
 #define DEPTH_KD            0.1f
 #define DEPTH_SAMPLE_US     100000         // 100ms = 10Hz
+// 深度保持只在「真正下潛」才啟動的門檻：水面/空中（depth < 此值）不跑深度 PID。
+// 否則在空氣中 PID 永遠達不到目標 → 積分捲繞(windup) → 垂直馬達自己越轉越快（放開搖桿/解除急停後尤明顯）。
+#define DEPTH_HOLD_MIN_M    0.20f          // > 20cm 才做 depth-hold；以下歸零
 
 // --------------------- 電量估算（3 串 18650，doc/03） ---------------------
 // 18650 滿電 4.2V / 截止 ~3.0V，但放電曲線非線性（中段 ~3.7V 很平、兩端陡）。
