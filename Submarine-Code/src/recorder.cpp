@@ -8,6 +8,7 @@ bool     g_recording = false;
 bool     g_cardReady = false;
 uint32_t g_frameCount = 0;
 uint32_t g_moviOffset = 0;        // 指向 movi 的 "LIST" tag（header 結尾）
+uint32_t g_recStartMs = 0;        // 錄影起始 millis（停止時算實測 fps，回補進 header 防快轉）
 
 constexpr uint32_t MAX_IDX_FRAMES = 30000;   // 15fps×30min≈27000（doc/05）
 struct AviIdx { uint32_t offset; uint32_t size; };
@@ -15,7 +16,9 @@ AviIdx*  g_idx = nullptr;
 
 // header 內待回補欄位的絕對位元組偏移（layout 見下方 writeAviHeader 註解）
 constexpr uint32_t OFF_RIFF_SIZE   = 4;
+constexpr uint32_t OFF_USPERFRAME  = 32;     // avih dwMicroSecPerFrame
 constexpr uint32_t OFF_TOTALFRAMES = 48;
+constexpr uint32_t OFF_STRH_SCALE  = 128;    // strh dwScale（dwRate 緊接 @132）
 constexpr uint32_t OFF_STRH_LENGTH = 140;
 
 void wr32(uint32_t v) { g_avi.write((uint8_t*)&v, 4); }
@@ -112,6 +115,7 @@ bool startRecording(int width, int height, int fps) {
     g_moviOffset = g_avi.position();      // = 212
     tag("LIST"); wr32(0); tag("movi");    // movi 大小先填 0，結束回補
 
+    g_recStartMs = millis();
     g_recording = true;
     log_i("開始錄影：%s（%dx%d @%dfps）", filename, width, height, fps);
     return true;
@@ -120,7 +124,11 @@ bool startRecording(int width, int height, int fps) {
 void writeFrame(camera_fb_t* fb) {
     if (!g_recording || !g_avi || !fb) return;
 
-    uint32_t frameOffset = g_avi.position() - g_moviOffset - 4;  // doc/05 自洽偏移
+    // idx1 的 dwChunkOffset：播放器以 (movi FourCC 位置 + offset) 來 seek，必須正好落在本影格的
+    // "00dc" 標記。movi FourCC 在 g_moviOffset+8（"LIST"4 + size4 之後），故 offset 相對於它。
+    // 舊版寫成 position-g_moviOffset-4，每筆多 +4 → 全部指進 JPEG 長度欄；header 又設了
+    // AVIF_HASINDEX → 信任索引的播放器 seek 到垃圾 → 整支影片全黑（ffmpeg/VLC 靠重掃才倖存）。
+    uint32_t frameOffset = g_avi.position() - (g_moviOffset + 8);
 
     tag("00dc");
     wr32(fb->len);
@@ -151,7 +159,21 @@ void stopRecording() {
     g_avi.seek(OFF_TOTALFRAMES); wr32(g_frameCount);
     g_avi.seek(OFF_STRH_LENGTH); wr32(g_frameCount);
 
+    // 回補「實測 fps」防快轉：header 原本寫死宣告 15fps，但實際擷取率受 SD 寫入 + streamTask 最低優先
+    // 壓到比 15 低 → 同樣張數標成 15fps 會播太快（快轉）。用整段實測時間算真 fps 蓋回 avih/strh，
+    // 播放器即以真實時間播放。dwScale=毫秒、dwRate=影格數×1000 → fps=frames/秒，精確不四捨。
+    uint32_t elapsedMs = millis() - g_recStartMs;
+    if (g_frameCount > 0 && elapsedMs > 100) {
+        uint32_t usPerFrame = (uint32_t)((uint64_t)elapsedMs * 1000ULL / g_frameCount);
+        g_avi.seek(OFF_USPERFRAME); wr32(usPerFrame);
+        g_avi.seek(OFF_STRH_SCALE); wr32(elapsedMs); wr32(g_frameCount * 1000UL);  // dwScale, dwRate 連寫
+        log_i("錄影結束：%lu 影格 / %lu ms ＝ 實測 %.1f fps（已回補防快轉）",
+              (unsigned long)g_frameCount, (unsigned long)elapsedMs,
+              g_frameCount * 1000.0 / elapsedMs);
+    } else {
+        log_i("錄影結束：%lu 影格（時間太短，fps 維持宣告值）", (unsigned long)g_frameCount);
+    }
+
     g_avi.close();
     g_recording = false;
-    log_i("錄影結束：%lu 影格", (unsigned long)g_frameCount);
 }
