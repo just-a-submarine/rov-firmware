@@ -33,6 +33,14 @@ void gamepadSetRemote(int16_t lx, int16_t ly, int16_t ry, uint16_t buttons);
 void gamepadSetAuto(bool autoMode);
 bool gpAuto();
 
+// 手機 UTC 紀元秒（WS ts 欄）→ 轉發給 ROV 設一次系統時鐘（解 SD 檔 1980 問題）。0=未提供。
+void     gamepadSetEpoch(uint32_t epochS);
+uint32_t gpEpoch();
+
+// 手機拍照單調序號（WS ph 欄）→ 轉發給 ROV，序號一變就拍一張（取代 LB 邊緣觸發）。
+void    gamepadSetPhotoSeq(uint8_t seq);
+uint8_t gpPhotoSeq();
+
 int16_t gpAxisLX();          // 左搖桿 X（右 = +）
 int16_t gpAxisLY();          // 左搖桿 Y（前推 = -）
 int16_t gpAxisRY();          // 右搖桿 Y（前推 = -）

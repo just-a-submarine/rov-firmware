@@ -14,6 +14,8 @@
 static int16_t  s_lx = 0, s_ly = 0, s_ry = 0;
 static uint16_t s_btns  = 0;
 static bool     s_auto  = false;     // 手機「啟動自動」開關（WS auto 欄）
+static uint32_t s_epoch = 0;         // 手機 UTC 紀元秒（WS ts 欄）→ 轉發給 ROV 設時鐘
+static uint8_t  s_photoSeq = 0;      // 手機拍照單調序號（WS ph 欄）→ 轉發給 ROV
 static uint32_t s_lastMs = 0;
 
 static inline bool ctrlFresh() {
@@ -27,6 +29,12 @@ void gamepadSetRemote(int16_t lx, int16_t ly, int16_t ry, uint16_t buttons) {
 
 void gamepadSetAuto(bool autoMode) { s_auto = autoMode; }
 bool gpAuto() { return ctrlFresh() && s_auto; }   // 控制斷線即自動關閉（failsafe）
+
+void     gamepadSetEpoch(uint32_t epochS) { s_epoch = epochS; }
+uint32_t gpEpoch() { return s_epoch; }            // 手機 UTC 紀元秒（0=未提供）
+
+void    gamepadSetPhotoSeq(uint8_t seq) { s_photoSeq = seq; }
+uint8_t gpPhotoSeq() { return s_photoSeq; }       // 手機拍照單調序號（不受 ctrlFresh 影響，序號變即拍）
 
 // 藍牙已停用，恆為 false（保留供診斷列印用）。
 bool btControllerConnected() { return false; }

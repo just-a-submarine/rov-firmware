@@ -173,7 +173,12 @@ void takePhotoInstant() {
     char fn[40];
     snprintf(fn, sizeof(fn), "/photo_%lu.jpg", (unsigned long)millis());
     File f = SD_MMC.open(fn, FILE_WRITE);
-    if (f) { f.write(photoBuf, len); f.close(); log_i("即時拍照 %s（%u bytes）", fn, (unsigned)len); }
+    if (!f) { log_e("拍照開檔失敗 %s（SD 滿/壞？）", fn); return; }   // 失敗就不回 ack
+    size_t wrote = f.write(photoBuf, len);
+    f.close();
+    if (wrote != len) { log_e("拍照寫入不全 %s（%u/%u）", fn, (unsigned)wrote, (unsigned)len); return; }
+    log_i("即時拍照 %s（%u bytes）", fn, (unsigned)len);
+    // 只有真的把整張寫進 SD 才回 ack → 手機「已拍照存檔」提示誠實可信（舊版開檔失敗也回 ack＝假提示）。
     g_photoAck = true;
 }
 

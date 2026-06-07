@@ -8,6 +8,7 @@
 #include "navigation.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <sys/time.h>
 
 namespace {
 
@@ -27,9 +28,27 @@ void applyControl(const ControlPacket& pkt, const TelemetrySnapshot& snap,
         wasEStop = false;
     }
 
-    // 2. 串流模式 / 拍照旗標轉交相機
+    // 2. 串流模式 / 拍照轉交相機。拍照改用單調序號：序號一變就拍一張——免邊緣偵測，
+    //    任何取樣率/ESP-NOW 丟包都漏不掉、連點不會合併（GS 100Hz 持續夾帶最新序號補送）。
     cameraSetStreamMode(pkt.streamMode);
-    if (pkt.takePhoto) cameraRequestPhoto();
+    static uint8_t s_lastPhotoSeq = 0;
+    static bool    s_photoSeqInit = false;
+    if (!s_photoSeqInit) { s_lastPhotoSeq = pkt.photoSeq; s_photoSeqInit = true; }  // 開機/連線對齊，不誤拍
+    else if (pkt.photoSeq != s_lastPhotoSeq) {
+        s_lastPhotoSeq = pkt.photoSeq;
+        if (pkt.streamMode == 0) cameraRequestPhoto();   // 僅純串流模式拍照（錄影中按拍照＝直接丟，不延後）
+    }
+
+    // 2.5 系統時鐘：ROV 無 RTC/NTP（GPS 模組亦壞）→ 開機後 time() 停在 1980，SD 照片/影片時間全錯。
+    //     收到手機 UTC 紀元秒就設一次（之後忽略，避免持續抖動）。TZ 已在 setup() 設為 CST-8（台灣），
+    //     FatFs get_fattime 走 localtime → 檔案時間顯示為本地時間。門檻 1.7e9＝2023-11，濾掉 0/亂值。
+    static bool s_clockSet = false;
+    if (!s_clockSet && pkt.epochS > 1700000000UL) {
+        struct timeval tv = { .tv_sec = (time_t)pkt.epochS, .tv_usec = 0 };
+        settimeofday(&tv, nullptr);
+        s_clockSet = true;
+        log_i("[TIME] 系統時鐘已由手機設定（epoch=%lu）", (unsigned long)pkt.epochS);
+    }
 
     // 3. LED：Y 鍵狀態（pkt.ledOn）最高優先；否則深度 > 5cm 自動開（doc/06 §七）
     setLed(pkt.ledOn || (snap.depthM > DEPTH_LED_THRESH_M));

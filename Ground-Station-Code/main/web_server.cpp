@@ -37,6 +37,8 @@ static void onWSEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
                          (int16_t)constrain(ly, -32767, 32767),
                          (int16_t)constrain(ry, -32767, 32767), b);
         gamepadSetAuto((doc["auto"] | 0) != 0);   // 自動/手動開關（缺欄＝0＝手動）
+        gamepadSetEpoch((uint32_t)(doc["ts"] | 0));   // 手機 UTC 紀元秒 → 轉發給 ROV 設時鐘（缺欄＝0）
+        gamepadSetPhotoSeq((uint8_t)(doc["ph"] | 0)); // 手機拍照單調序號 → 轉發給 ROV（缺欄＝0）
     }
 }
 

@@ -421,10 +421,11 @@ function initFullscreen() {
 function clampAxis(v) { return Math.max(-32767, Math.min(32767, Math.round((v || 0) * 32767))); }
 function pressed(gp, i) { return gp.buttons[i] && gp.buttons[i].pressed ? 1 : 0; }
 
-// 虛擬觸控狀態（無手把時生效）。b 位元同手把：bit3=Y(燈) / bit4=LB(拍照) / bit5=RB(錄影)。
+// 虛擬觸控狀態（無手把時生效）。b 位元同手把：bit3=Y(燈) / bit5=RB(錄影)。拍照改走 photoSeq（見下）。
 const touch = { lx: 0, ly: 0, ry: 0, b: 0 };
 let activeTab = 'video';
 let autoEngaged = false;   // 「啟動自動」開關 → controlTick 帶 auto 欄上行；GS 設 pkt.autoMode
+let photoSeq = 0;          // 拍照單調序號：每按一下 +1 並夾帶每筆 controlTick 上行；ROV 序號一變就拍一張
 
 function firstGamepad() {
   const pads = navigator.getGamepads ? navigator.getGamepads() : [];
@@ -452,7 +453,10 @@ function controlTick() {
   } else {
     lx = touch.lx; ly = touch.ly; ry = touch.ry; b = touch.b;
   }
-  ws.send(JSON.stringify({ t: 'c', lx, ly, ry, b, auto: autoEngaged ? 1 : 0 }));
+  // ts＝手機 UTC 紀元秒：ROV 無 RTC/NTP/GPS，靠這個設一次系統時鐘，否則 SD 照片/影片時間恆為 1980。
+  // ph＝拍照單調序號：每筆都帶最新值，ROV 序號一變就拍一張（漏不掉、連點不合併、ESP-NOW 丟包自動補送）。
+  ws.send(JSON.stringify({ t: 'c', lx, ly, ry, b, auto: autoEngaged ? 1 : 0,
+                           ts: Math.floor(Date.now() / 1000), ph: photoSeq }));
 }
 
 function initInput() {
@@ -520,13 +524,46 @@ function initTouchControls() {
     dj.addEventListener('pointerup', releaseD);
     dj.addEventListener('pointercancel', releaseD);
   }
-  // 動作鍵：按住設 bit、放開清 bit → GS 偵測上升邊緣各做一次（燈 toggle / 拍照 / 錄影 toggle）。
-  bindHold('tb-light', () => setTouchBit(1 << 3, true), () => setTouchBit(1 << 3, false)); // Y
-  bindHold('tb-photo', () => setTouchBit(1 << 4, true), () => setTouchBit(1 << 4, false)); // LB
-  bindHold('tb-rec',   () => setTouchBit(1 << 5, true), () => setTouchBit(1 << 5, false)); // RB
+  // 燈/錄影＝toggle，按下設 bit、放開清 bit → GS 偵測上升邊緣 toggle 一次。
+  // 用 pulsePress/pulseRelease 保證最短脈衝寬，否則快速點擊會被 25Hz 上行漏掉（見下方說明）。
+  bindHold('tb-light', () => pulsePress(1 << 3), () => pulseRelease(1 << 3)); // Y（燈 toggle）
+  bindHold('tb-rec',   () => pulsePress(1 << 5), () => pulseRelease(1 << 5)); // RB（錄影 toggle）
+  // 拍照＝按一下拍一張：用單調序號（不走 bit/邊緣），並立刻本地閃快門 → 一按就有反應、超利索。
+  bindHold('tb-photo', triggerPhoto, () => {});
 }
 
-function setTouchBit(bit, on) { if (on) touch.b |= bit; else touch.b &= ~bit; }
+// 拍照：序號 +1（夾帶每筆 controlTick；ROV 序號變即拍，漏不掉/不合併）＋ 立刻快門回饋（不等 ROV ack）。
+function triggerPhoto() {
+  photoSeq = (photoSeq + 1) & 0xFF;
+  flashShutter();
+}
+
+// 即時快門：本地全螢幕快閃，按下當下就有視覺回饋（ROV 真存好後另有「已拍照存檔」toast 確認）。
+function flashShutter() {
+  const s = document.getElementById('shutter');
+  if (!s) return;
+  s.classList.remove('flash');
+  void s.offsetWidth;          // 強制 reflow → 連點也能每次重觸動畫
+  s.classList.add('flash');
+}
+
+// 一次性動作鍵的最短脈衝寬。手機以 25Hz（controlTick 每 40ms）取樣送出「當下」的 touch.b；
+// 若點擊比一個取樣週期還短，bit 在兩次 tick 之間 set→clear 完全沒被取樣 → GS 收不到上升邊緣
+// → 拍照/錄影/燈沒反應，使用者得連按好幾下。按下後保證 bit 至少維持 PULSE_MS（≥3 個取樣週期），
+// 上行必取樣到 ≥1 次、GS 100Hz 邊緣偵測必觸發一次。
+const PULSE_MS = 120;
+const pulseDownAt = {};   // bit -> 按下時間戳(ms)
+const pulseTimer  = {};   // bit -> 延後清除計時器
+function pulsePress(bit) {
+  if (pulseTimer[bit]) { clearTimeout(pulseTimer[bit]); pulseTimer[bit] = null; }
+  pulseDownAt[bit] = Date.now();
+  touch.b |= bit;
+}
+function pulseRelease(bit) {
+  const wait = Math.max(0, PULSE_MS - (Date.now() - (pulseDownAt[bit] || 0)));
+  if (pulseTimer[bit]) clearTimeout(pulseTimer[bit]);
+  pulseTimer[bit] = setTimeout(() => { touch.b &= ~bit; pulseTimer[bit] = null; }, wait);
+}
 
 function bindHold(id, onPress, onRelease) {
   const el = document.getElementById(id);

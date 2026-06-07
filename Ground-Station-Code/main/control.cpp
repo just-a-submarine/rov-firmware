@@ -68,10 +68,9 @@ void readXboxAndSend() {
     if (btnRB && !s_rbLast) s_streamMode = (s_streamMode == 0) ? 1 : 0;
     s_rbLast = btnRB;
 
-    // LB 邊緣觸發：僅模式 0 送出單張拍照
-    bool takePhoto = false;
-    if (btnLB && !s_lbLast && s_streamMode == 0) takePhoto = true;
-    s_lbLast = btnLB;
+    // 拍照已改走手機單調序號（gpPhotoSeq → ControlPacket.photoSeq），不再由 GS 邊緣偵測 LB。
+    // 保留 s_lbLast 讀取避免 GP_LB 變動誤觸其他邏輯（目前無）。
+    (void)btnLB; s_lbLast = btnLB;
 
     // Y 邊緣觸發：LED toggle（最高優先）
     if (btnY && !s_yLast) s_ledState = !s_ledState;
@@ -99,7 +98,8 @@ void readXboxAndSend() {
     pkt.emergencyStop = s_estop;
     pkt.autoMode      = gpAuto();          // 手機「啟動自動」開關（WS auto 欄）；ROV 才會跑 computeNavigation
     pkt.streamMode    = s_streamMode;
-    pkt.takePhoto     = takePhoto;
+    pkt.photoSeq      = gpPhotoSeq();       // 手機拍照單調序號 → ROV 序號一變就拍一張
+    pkt.epochS        = gpEpoch();          // 手機 UTC 紀元秒 → ROV 設時鐘（0=未提供）
     pkt.msgType       = MSG_CONTROL;
 
     s_lastL = mp.left; s_lastR = mp.right; s_lastV = depth;   // 供遙測回傳給 Web 顯示轉速 %

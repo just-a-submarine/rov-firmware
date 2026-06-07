@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <Wire.h>
+#include <time.h>
 #include "config.h"
 #include "shared_state.h"
 #include "motors.h"
@@ -21,6 +22,10 @@ void setup() {
     Serial.setDebugOutput(true);
 #endif
     log_i("=== ROV 啟動 ===");
+
+    // 時區設台灣（UTC+8）：之後手機送來 UTC 紀元秒設時鐘，FatFs 走 localtime → SD 檔顯本地時間。
+    setenv("TZ", "CST-8", 1);
+    tzset();
 
     sharedStateInit();
     Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);

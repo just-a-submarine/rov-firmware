@@ -21,7 +21,9 @@ struct __attribute__((packed)) ControlPacket {
     bool     emergencyStop;
     bool     autoMode;
     uint8_t  streamMode;     // 0 = 純串流，1 = 串流 + SD 錄影
-    bool     takePhoto;      // true = 觸發單張拍照（LB 邊緣觸發，純串流模式有效）
+    uint8_t  photoSeq;       // 單調拍照序號：序號一變 ROV 就拍一張（模式 0 有效）。取代舊 bool takePhoto，
+                             //   免邊緣偵測→任何取樣率/丟包都漏不掉、連點不合併。
+    uint32_t epochS;         // 手機 UTC 紀元秒（ROV 收到設一次系統時鐘；0=未提供）。解 SD 檔 1980 問題。
     uint8_t  msgType;        // 0 = 控制
 };
 

@@ -217,6 +217,14 @@ body {
   font-size: 15px; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 50;
 }
 
+/* 即時快門閃光：拍照按下當下本地閃一下（不等 ROV ack）→「一按就拍」的利索回饋。 */
+#shutter {
+  position: fixed; inset: 0; background: #fff; opacity: 0;
+  pointer-events: none; z-index: 9999;
+}
+#shutter.flash { animation: shutterFlash 180ms ease-out; }
+@keyframes shutterFlash { 0% { opacity: .55; } 100% { opacity: 0; } }
+
 /* ---------- 虛擬觸控控制（橫向、無實體手把時；置於影像頁內 → inset:0 只蓋影像區、不蓋 HUD）---------- */
 .touch-ctl { position: absolute; inset: 0; z-index: 40; pointer-events: none; }
 .touch-ctl[hidden] { display: none; }
