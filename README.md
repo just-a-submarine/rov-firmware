@@ -14,7 +14,7 @@
 ## 系統架構
 
 ```
-   Xbox 手把 ──藍牙──▶ 手機瀏覽器（Gamepad API 當控制器）
+   Xbox 手把 ──USB 有線──▶ 手機瀏覽器（Gamepad API 當控制器）
                           │
                           ├─ WebSocket ──▶ 地面站 ESP32-S3（AP 192.168.4.1）
                           │     • 控制上行（搖桿/按鍵）
@@ -26,9 +26,9 @@
                                             └─ OV5640 MJPEG Server（esp_http_server :80/stream）
 ```
 
-- **控制來源＝手機**：Xbox 手把藍牙配對到**手機**，手機網頁用 Gamepad API 讀取，經 WebSocket 上行到地面站，
+- **控制來源＝手機**：Xbox 手把以 USB 線接到**手機**，手機網頁用 Gamepad API 讀取，經 WebSocket 上行到地面站，
   地面站再以 ESP-NOW 轉發給潛水艇。地面站**藍牙已完全停用**（不初始化 BTstack/Bluepad32、BT RAM 已釋放）。
-  手把藍牙配對到手機，Gamepad API 經 WS 上行；無手把時可用螢幕虛擬搖桿。
+  手把以 USB 線連手機，Gamepad API 經 WS 上行；無手把時可用螢幕虛擬搖桿。
 - 地面站**不碰影像**：手機 `<img>` 直連潛水艇 `192.168.4.100`，地面站零負擔。
 - 兩端 ESP-NOW 封包格式**必須逐位元組一致**
   （`Submarine-Code/include/packets.h` ⟷ `Ground-Station-Code/main/packets.h`）。
@@ -103,7 +103,8 @@ pio run -e groundstation -t uploadfs      # 上傳網頁（韌體與網頁兩者
 
 - 🟦 潛水艇：編譯/燒錄/開機驗證通過；感測器自檢、SD、單機 AP 均 OK。相機 MJPEG 串流已實測出畫面
   （VGA@10MHz、~6–7fps；含持續背景重試自癒）。相機調參極簡（brightness +2 / contrast -1）。
-  GPS 模組 #1 壞、待換。AVI idx1 偏移已修正。待實機：馬達轉向最終確認、錄影播放驗證、與地面站整合。
+  GPS 模組 #1 壞、待換。錄影（AVI 防全黑＋實測 fps 防快轉）、拍照（即時單調序號＋誠實 ack）、
+  SD 檔案時間（手機授時 + TZ=CST-8）皆已修正並實機驗證。待實機：馬達轉向最終確認、與地面站整合。
 - 🟩 地面站：韌體 + 網頁編譯通過；藍牙已完全停用（BT RAM 釋放、flash −360KB）。
   手機網頁含虛擬搖桿（無手把也能操控）、離線地圖、影像 contain 比例。
   GS AP MAC 由韌體釘死（換板免改 ROV）。ESP-NOW 遙測已通。待實機：手把配對到手機整體操控、馬達整合。
