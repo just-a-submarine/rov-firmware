@@ -21,8 +21,9 @@ httpd_handle_t    g_httpd = nullptr;
 // 相機設定保存供自癒重初始化（OV5640 無 RESET/PWDN 腳，偶發開機壞狀態需 deinit+reinit）
 camera_config_t   g_camConfig = {};
 
-// 相機是否已判定壞死（軟體 reinit 救不回；OV5640 無 RESET/PWDN 腳，需實體斷電才清得掉）。
-// 判死後 streamTask 進入閒置，不再狂刷 fb_get/reinit；控制與遙測續行。
+// 相機目前「無可用影格」旗標（streamHandler 據此回 500 讓手機重連）。**可恢復**：OV5640 的
+// RESET/PWDN 未接 GPIO、冷啟動非決定性（常需多次 reinit 才起得來），故 streamTask 在此旗標
+// 為真時持續背景重試，直到相機吐出影格自動清旗標——不永久判死、不必拔電；控制/遙測不受影響。
 bool g_camDead = false;
 
 // 套用畫面方向（模組實裝方向修正）。每次 init/reinit 後都要重設（sensor 重置會回預設）。
@@ -30,6 +31,15 @@ void applyCamOrientation(sensor_t* s) {
     if (!s) return;
     s->set_vflip(s, CAM_VFLIP ? 1 : 0);
     s->set_hmirror(s, CAM_HFLIP ? 1 : 0);
+}
+
+// 極簡提亮（只動兩個旋鈕，其餘曝光/增益/白平衡全交 OV5640 原廠自動值）。
+// 上次整包覆蓋預設反而更暗，已還原；本版只做最小調整：暗處稍亮 + 降對比護亮部。
+// 每次 init/reinit 後都要重設（sensor reset 會回預設）。不支援的 setter 自行回 -1（no-op）。
+void applyCamTuning(sensor_t* s) {
+    if (!s) return;
+    s->set_brightness(s, 2);   // 整體提亮（+2，暗處跟著變亮）
+    s->set_contrast(s, -1);    // 降一點對比＝把暗部拉起、亮部壓下，避免「亮的太亮、暗的太暗」
 }
 
 // 重新初始化相機（deinit→init）。回傳 true 表示 init 成功。
@@ -40,7 +50,7 @@ bool reinitCamera() {
     vTaskDelay(pdMS_TO_TICKS(150));
     if (e != ESP_OK) { log_e("[CAM] reinit 失敗：0x%x", e); return false; }
     sensor_t* s = esp_camera_sensor_get();
-    if (s) { s->set_framesize(s, FRAMESIZE_VGA); applyCamOrientation(s); }
+    if (s) { s->set_framesize(s, FRAMESIZE_VGA); applyCamOrientation(s); applyCamTuning(s); }
     return true;
 }
 
@@ -58,7 +68,7 @@ const char* PART_HDR  = "\r\n--frame\r\nContent-Type: image/jpeg\r\nContent-Leng
 esp_err_t streamHandler(httpd_req_t* req) {
     log_i("[HTTP] 收到 /stream 請求");
     // 相機已判死：立刻結束連線，讓手機端 <img> 觸發 error → 顯示「影像中斷，重連中」並每 3s 重連，
-    // 不要握著連線空等（否則手機永遠卡在「影像連線中…」不動）。相機復原（實體斷電重開後）會自動接上。
+    // 不要握著連線空等（否則手機永遠卡在「影像連線中…」不動）。相機復原（背景重試成功或斷電重開）後手機重連即自動接上。
     if (g_camDead) { httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "camera offline"); return ESP_FAIL; }
     if (httpd_resp_set_type(req, STREAM_CT) != ESP_OK) return ESP_FAIL;
     httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
@@ -168,43 +178,59 @@ void takePhotoInstant() {
 }
 
 void streamTask(void*) {
-    // 開機自癒：OV5640 偶發開機進壞狀態 → 零影格。先試抓一幀，抓不到就 reinit 重試 3 次。
-    // （壞狀態下 fb_get 會 block 數秒才回 null；正常開機則立即拿到一幀直接跳出。）
-    bool gotFrame = false;
-    for (int attempt = 0; attempt < 3 && !gotFrame; ++attempt) {
+    // 冷啟動先探一幀：拿到就正常開跑；拿不到不再「試 3 次就永久放棄」，而是設 g_camDead
+    // 進下方背景重試（持續 reinit 直到相機吐出影格自動恢復）。OV5640 RESET/PWDN 未接 GPIO、
+    // 冷啟動非決定性（常需多次 reinit 才起得來），故以「不放棄、會自癒」取代舊的開機判死。
+    {
         camera_fb_t* fb = esp_camera_fb_get();
-        if (fb) { esp_camera_fb_return(fb); gotFrame = true; break; }
-        log_w("[CAM] 開機取不到影格，重新初始化相機（第 %d 次）", attempt + 1);
-        reinitCamera();
-    }
-    if (!gotFrame) {
-        // 軟體 deinit+init 救不回：OV5640 無 RESET/PWDN 腳，SoC 重置（含燒錄/esp_restart）不會把
-        // sensor 斷電，這顆已卡在壞狀態。判死 → 閒置不再狂刷；控制/遙測不受影響。
-        g_camDead = true;
-        log_e("[CAM] 開機相機壞死、軟體救不回 → 放棄相機、保留控制/遙測。"
-              "請『實體斷電完整重開潛水艇一次』清除（治本：把 PWDN/RESET 接到空閒 GPIO）。");
+        if (fb) { esp_camera_fb_return(fb); g_camDead = false; }
+        else    { g_camDead = true;
+                  log_w("[CAM] 開機取不到影格 → 進背景重試（不放棄，相機活了自動恢復）"); }
     }
 
-    // 執行期掉幀偵測（水下不重開機）：active 中 seq 連續 ~4s 沒推進 → reinit；連 3 次無效則判死閒置。
+    // 掉幀/壞死自癒狀態（見下方迴圈）。reinitStreak 僅供重試退避與 log，不再用來「永久判死」。
     uint32_t lastSeqMs = millis();
     uint32_t lastSeqVal = g_frameSeq;
     int      reinitStreak = 0;
+    uint32_t nextReinitMs = 0;       // 背景重試節流（0＝可立即重試）
 
     for (;;) {
-        if (g_camDead) { vTaskDelay(pdMS_TO_TICKS(500)); continue; }  // 已判死：閒置，不狂刷 fb_get/reinit
+        // 無可用影格（開機沒起來／執行期掉幀）：持續背景重試 reinit，相機一吐出影格就自動清旗標
+        // 恢復串流——不永久判死、不必拔電。streamTask 為最低優先級，blocking 的 fb_get 會讓出
+        // CPU，無限重試不影響控制/遙測。
+        if (g_camDead) {
+            if (millis() >= nextReinitMs) {
+                log_w("[CAM] 無影格，重新初始化相機（第 %d 次，持續重試直到恢復）", ++reinitStreak);
+                reinitCamera();
+                uint32_t backoff = 1000 + (uint32_t)reinitStreak * 500;   // 退避：越試越久，封頂 5s
+                nextReinitMs = millis() + (backoff > 5000 ? 5000 : backoff);
+            }
+            camera_fb_t* fb = esp_camera_fb_get();
+            if (fb) {                                    // 相機活過來了 → 發佈此幀並恢復
+                if (g_streamActive && fb->len <= MAX_JPEG) {
+                    xSemaphoreTake(g_frameMutex, portMAX_DELAY);
+                    memcpy(g_frameBuf, fb->buf, fb->len);
+                    g_frameLen = fb->len; g_frameSeq++;
+                    xSemaphoreGive(g_frameMutex);
+                }
+                esp_camera_fb_return(fb);
+                g_camDead = false; reinitStreak = 0;
+                lastSeqVal = g_frameSeq; lastSeqMs = millis();
+                log_i("[CAM] 相機已恢復，串流續傳（seq=%lu）", (unsigned long)g_frameSeq);
+            } else {
+                vTaskDelay(pdMS_TO_TICKS(50));
+            }
+            continue;
+        }
         applyQualityIfChanged();
 
-        if (g_frameSeq != lastSeqVal) { lastSeqVal = g_frameSeq; lastSeqMs = millis(); reinitStreak = 0; }
+        // 執行期掉幀偵測（水下不重開機）：seq 連續 ~4s 沒推進 → 轉入上方背景重試自癒，
+        // 不再「3 次無效就永久放棄」（多試幾次多半會活回來，不必拔電）。
+        if (g_frameSeq != lastSeqVal) { lastSeqVal = g_frameSeq; lastSeqMs = millis(); }
         else if (g_streamActive && !g_photoReq && millis() - lastSeqMs > 4000) {
-            if (reinitStreak < 3) {
-                log_w("[CAM] 執行期掉幀逾時，重新初始化相機（第 %d 次）", reinitStreak + 1);
-                reinitCamera();
-                reinitStreak++;
-                lastSeqMs = millis();
-            } else {
-                g_camDead = true;
-                log_e("[CAM] 執行期相機重初始化多次無效 → 放棄相機（需實體斷電重開）");
-            }
+            log_w("[CAM] 執行期掉幀逾時 → 轉背景重試自癒（不必拔電）");
+            g_camDead = true; nextReinitMs = 0;   // 交給上方 g_camDead 重試邏輯，立刻先重試一次
+            continue;
         }
 
         // 拍照請求（僅模式 0）：即時存最新影格，不暫停串流、不切解析度
@@ -273,7 +299,8 @@ bool setupCamera() {
     if (err != ESP_OK) { log_e("esp_camera_init 失敗：0x%x", err); return false; }
 
     sensor_t* s = esp_camera_sensor_get();
-    if (s) { log_i("[CAM] 偵測到 sensor PID=0x%04x（OV5640=0x5640）", s->id.PID); applyCamOrientation(s); }
+    if (s) { log_i("[CAM] 偵測到 sensor PID=0x%04x（OV5640=0x5640）", s->id.PID);
+             applyCamOrientation(s); applyCamTuning(s); }
     else   log_e("[CAM] esp_camera_sensor_get 回 null");
 
     startHttpServer();
