@@ -86,12 +86,16 @@ function updateTelemetry(d) {
   setText('t-depth',   fmt(d.depth, 2));
   setText('t-bat',     (typeof d.bat === 'number') ? d.bat : '--');
   setText('t-power',   fmt(d.power, 1));
-  setText('t-current', fmt(d.current, 2));
   setText('t-rssi',    (typeof d.rssi === 'number') ? d.rssi : '--');
   setText('t-heading', magAlive(d) ? fmt(d.heading, 0) : '--');   // 羅盤未上線顯示 --
-  setText('t-latlng',  fmt(d.lat, 6) + ', ' + fmt(d.lng, 6));
+  setText('t-ml', pctMotor(d.ml));   // 左/右/垂直馬達轉速 %（GS 回傳最近指令 -1023~1023）
+  setText('t-mr', pctMotor(d.mr));
+  setText('t-mv', pctMotor(d.mv));
+  // 電流欄已移除（空間改放三馬達轉速）；座標欄亦已移除。地圖 ROV 標記仍用 d.lat/d.lng（updateRovMarker）
   updateLed(d.led);
 }
+// 馬達 PWM(-1023~1023) → 百分比整數（-100~100，負＝反向/下潛）；無資料回 '--'
+function pctMotor(v) { return (typeof v === 'number' && isFinite(v)) ? Math.round(v / 1023 * 100) : '--'; }
 
 // 燈狀態：開（琥珀亮）/ 關（灰）/ --（無遙測）
 function updateLed(on) {
@@ -100,13 +104,18 @@ function updateLed(on) {
   if (on === true)       { el.textContent = '開'; el.style.color = 'var(--amber)'; }
   else if (on === false) { el.textContent = '關'; el.style.color = 'var(--muted)'; }
   else                   { el.textContent = '--'; el.style.color = ''; }
+  const lb = document.getElementById('tb-light');   // 虛擬燈鈕亮起＝燈實際為開
+  if (lb) lb.classList.toggle('on', on === true);
 }
 
 function updateStreamModeBadge(mode) {
-  const badge = document.getElementById('stream-mode-badge');
-  if (!badge) return;
-  if (mode === 1) { badge.textContent = '⏺ 串流 + 錄影'; badge.style.background = '#f43f5e'; badge.style.color = '#fff'; }
-  else            { badge.textContent = '● 純串流';      badge.style.background = ''; badge.style.color = ''; }
+  const badge = document.getElementById('stream-mode-badge');   // 狀態列「串流」格
+  if (badge) {
+    badge.textContent = (mode === 1) ? '錄影中' : '純串流';
+    badge.style.color = (mode === 1) ? 'var(--red)' : '';        // 錄影中＝紅，純串流＝預設青
+  }
+  const rb = document.getElementById('tb-rec');   // 虛擬錄影鈕亮起＝目前正在錄影
+  if (rb) rb.classList.toggle('on', mode === 1);
 }
 
 function updateRSSIWarning(rssi) {
@@ -354,10 +363,23 @@ function initTabs() {
     tabs.forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
     const name = tab.dataset.tab;
+    activeTab = name;                  // 控制虛擬鈕只在影像分頁出現（controlTick 讀此值）
     document.querySelectorAll('.pane').forEach(p => p.classList.remove('active'));
     document.getElementById('pane-' + name).classList.add('active');
     if (name === 'map') ensureMap();   // 首次進航點頁才載入 Leaflet 並初始化地圖
   }));
+}
+
+// 「啟動自動」開關（航點頁側欄）：切換 autoEngaged → controlTick 帶 auto 上行 → GS 設 pkt.autoMode。
+// 註：ROV 需有航點且 GPS 定位有效才會實際移動；GPS 未修好前按下不會動，僅旗標生效（軟體完整、待硬體）。
+function initAutoToggle() {
+  const b = document.getElementById('btn-auto');
+  if (!b) return;
+  b.addEventListener('click', () => {
+    autoEngaged = !autoEngaged;
+    b.classList.toggle('primary', autoEngaged);
+    b.textContent = autoEngaged ? '■ 停止自動' : '▶ 啟動自動';
+  });
 }
 
 // ---------- 影像：中斷顯示佔位圖並自動重連 ----------
@@ -378,31 +400,6 @@ function initStream() {
   img.src = STREAM_SRC;   // 由 JS 啟動串流（避免無限連線的 <img> 卡住 window.load）
 }
 
-// ---------- 影像顯示比例（符合 / 填滿 / 拉伸，記憶於 localStorage）----------
-const FIT_MODES = [
-  { cls: 'fit-contain', label: '符合' },   // object-fit: contain（完整畫面，留黑邊）
-  { cls: 'fit-cover',   label: '填滿' },   // object-fit: cover（填滿畫面，裁切邊緣）
-  { cls: 'fit-fill',    label: '拉伸' },   // object-fit: fill（拉滿，會變形）
-];
-function initFit() {
-  const img = document.getElementById('stream');
-  const btn = document.getElementById('btn-fit');
-  if (!img || !btn) return;
-  let idx = parseInt(localStorage.getItem('fitMode') || '0', 10);
-  if (!(idx >= 0 && idx < FIT_MODES.length)) idx = 0;
-  const apply = () => {
-    img.classList.remove('fit-contain', 'fit-cover', 'fit-fill');
-    img.classList.add(FIT_MODES[idx].cls);
-    btn.textContent = FIT_MODES[idx].label;
-  };
-  apply();
-  btn.addEventListener('click', () => {
-    idx = (idx + 1) % FIT_MODES.length;
-    try { localStorage.setItem('fitMode', String(idx)); } catch (_) {}
-    apply();
-  });
-}
-
 // ---------- 全螢幕 ----------
 function initFullscreen() {
   const btn = document.getElementById('btn-fs');
@@ -419,29 +416,129 @@ function initFullscreen() {
   });
 }
 
-// ---------- 手把：瀏覽器 Gamepad API → WS 上行 ----------
+// ---------- 控制上行：實體手把（Gamepad API）或螢幕虛擬搖桿 → WS ----------
+// 兩者送出完全相同的 {t:'c',lx,ly,ry,b}，GS 端不分來源。接上手把時優先用手把並自動隱藏虛擬鈕。
 function clampAxis(v) { return Math.max(-32767, Math.min(32767, Math.round((v || 0) * 32767))); }
 function pressed(gp, i) { return gp.buttons[i] && gp.buttons[i].pressed ? 1 : 0; }
 
-function pollAndSendGamepad() {
+// 虛擬觸控狀態（無手把時生效）。b 位元同手把：bit3=Y(燈) / bit4=LB(拍照) / bit5=RB(錄影)。
+const touch = { lx: 0, ly: 0, ry: 0, b: 0 };
+let activeTab = 'video';
+let autoEngaged = false;   // 「啟動自動」開關 → controlTick 帶 auto 欄上行；GS 設 pkt.autoMode
+
+function firstGamepad() {
   const pads = navigator.getGamepads ? navigator.getGamepads() : [];
-  let gp = null;
-  for (const p of pads) { if (p && p.connected) { gp = p; break; } }
-  setDot('dot-gp', !!gp);
-  if (!gp || !ws || ws.readyState !== WebSocket.OPEN) return;
-  // 位元：bit0=A,1=B,2=X,3=Y,4=LB,5=RB,6=Start(btn9),7=Back(btn8)
-  const b = pressed(gp,0) | (pressed(gp,1)<<1) | (pressed(gp,2)<<2) | (pressed(gp,3)<<3) |
-            (pressed(gp,4)<<4) | (pressed(gp,5)<<5) | (pressed(gp,9)<<6) | (pressed(gp,8)<<7);
-  ws.send(JSON.stringify({
-    t: 'c',
-    lx: clampAxis(gp.axes[0]), ly: clampAxis(gp.axes[1]), ry: clampAxis(gp.axes[3]), b
-  }));
+  for (const p of pads) { if (p && p.connected) return p; }
+  return null;
 }
 
-function initGamepad() {
+// 虛擬鈕只在「影像分頁 + 沒接手把」時出現（橫向限制由 CSS 再把關）
+function updateTouchVisible(hasPad) {
+  const el = document.getElementById('touch-ctl');
+  if (el) el.hidden = !(activeTab === 'video' && !hasPad);
+}
+
+function controlTick() {
+  const gp = firstGamepad();
+  setDot('dot-gp', !!gp);
+  updateTouchVisible(!!gp);
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  let lx, ly, ry, b;
+  if (gp) {
+    // 位元：bit0=A,1=B,2=X,3=Y,4=LB,5=RB,6=Start(btn9),7=Back(btn8)
+    b = pressed(gp,0) | (pressed(gp,1)<<1) | (pressed(gp,2)<<2) | (pressed(gp,3)<<3) |
+        (pressed(gp,4)<<4) | (pressed(gp,5)<<5) | (pressed(gp,9)<<6) | (pressed(gp,8)<<7);
+    lx = clampAxis(gp.axes[0]); ly = clampAxis(gp.axes[1]); ry = clampAxis(gp.axes[3]);
+  } else {
+    lx = touch.lx; ly = touch.ly; ry = touch.ry; b = touch.b;
+  }
+  ws.send(JSON.stringify({ t: 'c', lx, ly, ry, b, auto: autoEngaged ? 1 : 0 }));
+}
+
+function initInput() {
   window.addEventListener('gamepadconnected', () => setDot('dot-gp', true));
   window.addEventListener('gamepaddisconnected', () => setDot('dot-gp', false));
-  setInterval(pollAndSendGamepad, 40);   // ~25Hz 上行（GS 以最新值 100Hz 轉 ESP-NOW）
+  initTouchControls();
+  setInterval(controlTick, 40);   // ~25Hz 上行（GS 以最新值轉 ESP-NOW）
+}
+
+// 360° 虛擬搖桿 + 深度/燈/拍照/錄影。用 Pointer Events 支援多點觸控（左搖桿與右鈕可同時按）。
+function initTouchControls() {
+  const joy = document.getElementById('joy');
+  const thumb = document.getElementById('joy-thumb');
+  if (joy && thumb) {
+    let pid = null;
+    const maxR = () => joy.clientWidth / 2 - 8;          // 拇指可移動半徑
+    const moveTo = (e) => {
+      const r = joy.getBoundingClientRect();
+      let dx = e.clientX - (r.left + r.width / 2);
+      let dy = e.clientY - (r.top + r.height / 2);
+      const m = maxR(), len = Math.hypot(dx, dy) || 1;
+      if (len > m) { dx = dx / len * m; dy = dy / len * m; }
+      thumb.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+      touch.lx = Math.round(dx / m * 32767);
+      touch.ly = Math.round(dy / m * 32767);             // 螢幕下為正；上推 dy<0 → ly<0 = 前進（同手把）
+    };
+    joy.addEventListener('pointerdown', (e) => {
+      e.preventDefault(); pid = e.pointerId;
+      try { joy.setPointerCapture(pid); } catch (_) {}
+      moveTo(e);
+    });
+    joy.addEventListener('pointermove', (e) => { if (e.pointerId === pid) moveTo(e); });
+    const release = (e) => {
+      if (e.pointerId !== pid) return;
+      pid = null; thumb.style.transform = 'translate(0,0)'; touch.lx = 0; touch.ly = 0;
+    };
+    joy.addEventListener('pointerup', release);
+    joy.addEventListener('pointercancel', release);
+  }
+  // 深度垂直搖桿：上下挪動設 ry（比例＝升降轉速/強度），放開彈回中心歸零。
+  // 上推 dy<0 → ry<0 →（GS）vertMotor +（上升）；下拉 dy>0 → ry>0 → 下潛。同實體右搖桿垂直軸。
+  const dj = document.getElementById('depth-joy');
+  const dthumb = document.getElementById('depth-thumb');
+  if (dj && dthumb) {
+    let dpid = null;
+    const maxY = () => dj.clientHeight / 2 - 6;          // 拇指可移動半幅
+    const moveD = (e) => {
+      const r = dj.getBoundingClientRect();
+      let dy = e.clientY - (r.top + r.height / 2);
+      const m = maxY();
+      if (dy > m) dy = m; else if (dy < -m) dy = -m;
+      dthumb.style.transform = 'translateY(' + dy + 'px)';
+      touch.ry = Math.round(dy / m * 32767);
+    };
+    dj.addEventListener('pointerdown', (e) => {
+      e.preventDefault(); dpid = e.pointerId;
+      try { dj.setPointerCapture(dpid); } catch (_) {}
+      moveD(e);
+    });
+    dj.addEventListener('pointermove', (e) => { if (e.pointerId === dpid) moveD(e); });
+    const releaseD = (e) => {
+      if (e.pointerId !== dpid) return;
+      dpid = null; dthumb.style.transform = 'translateY(0)'; touch.ry = 0;
+    };
+    dj.addEventListener('pointerup', releaseD);
+    dj.addEventListener('pointercancel', releaseD);
+  }
+  // 動作鍵：按住設 bit、放開清 bit → GS 偵測上升邊緣各做一次（燈 toggle / 拍照 / 錄影 toggle）。
+  bindHold('tb-light', () => setTouchBit(1 << 3, true), () => setTouchBit(1 << 3, false)); // Y
+  bindHold('tb-photo', () => setTouchBit(1 << 4, true), () => setTouchBit(1 << 4, false)); // LB
+  bindHold('tb-rec',   () => setTouchBit(1 << 5, true), () => setTouchBit(1 << 5, false)); // RB
+}
+
+function setTouchBit(bit, on) { if (on) touch.b |= bit; else touch.b &= ~bit; }
+
+function bindHold(id, onPress, onRelease) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    try { el.setPointerCapture(e.pointerId); } catch (_) {}
+    el.classList.add('active'); onPress();
+  });
+  const up = () => { el.classList.remove('active'); onRelease(); };
+  el.addEventListener('pointerup', up);
+  el.addEventListener('pointercancel', up);
 }
 
 // ---------- 羅盤校準（手機端：轉 360° 收 magX/Y min/max → 算 offset/scale）----------
@@ -539,9 +636,9 @@ function initCompassCal() {
 function boot() {
   initTabs();          // 地圖改在首次開航點分頁時才載入（ensureMap）
   initStream();        // 在此才設定 <img>.src 啟動串流
-  initFit();           // 還原影像顯示比例偏好
   initFullscreen();
-  initGamepad();
+  initInput();         // 實體手把 + 螢幕虛擬搖桿（無手把時顯示）
+  initAutoToggle();    // 「啟動自動」開關（航點頁側欄）
   initCompassCal();    // 羅盤校準浮層（🧭 校準）
   connectWS();
   window.addEventListener('resize', () => { if (map) map.invalidateSize(); });

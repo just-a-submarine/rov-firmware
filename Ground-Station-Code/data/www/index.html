@@ -41,12 +41,14 @@
   <section class="telemetry">
     <div class="tcell"><span class="tlabel">電量</span><span id="t-bat"     class="tval">--</span><span class="tunit">%</span></div>
     <div class="tcell"><span class="tlabel">功率</span><span id="t-power"   class="tval">--</span><span class="tunit">W</span></div>
-    <div class="tcell"><span class="tlabel">電流</span><span id="t-current" class="tval">--</span><span class="tunit">A</span></div>
+    <div class="tcell mtr"><span class="tlabel">左</span><span id="t-ml" class="tval small">--</span><span class="tunit">%</span></div>
+    <div class="tcell mtr"><span class="tlabel">右</span><span id="t-mr" class="tval small">--</span><span class="tunit">%</span></div>
+    <div class="tcell mtr"><span class="tlabel">垂</span><span id="t-mv" class="tval small">--</span><span class="tunit">%</span></div>
     <div class="tcell"><span class="tlabel">訊號</span><span id="t-rssi"    class="tval">--</span><span class="tunit">dBm</span></div>
     <div class="tcell"><span class="tlabel">深度</span><span id="t-depth"   class="tval">--</span><span class="tunit">m</span></div>
     <div class="tcell"><span class="tlabel">航向</span><span id="t-heading" class="tval">--</span><span class="tunit">°</span></div>
-    <div class="tcell wide"><span class="tlabel">座標</span><span id="t-latlng" class="tval small">--, --</span></div>
     <div class="tcell led"><span class="tlabel">燈</span><span id="t-led" class="tval small">--</span></div>
+    <div class="tcell"><span class="tlabel">串流</span><span id="stream-mode-badge" class="tval small">純串流</span></div>
     <div id="rssi-warning" class="rssi-warn"></div>
   </section>
 
@@ -58,10 +60,30 @@
         <!-- src 由 app.js initStream() 設定：MJPEG 串流是無限連線，放在 HTML 會卡住 window.load -->
         <img id="stream" class="fit-contain" alt="">
         <div id="stream-ph" class="stream-ph">📡 影像連線中…</div>
-        <span id="stream-mode-badge" class="badge">● 純串流</span>
-        <button id="btn-fit" class="fit-btn" title="顯示比例">符合</button>
         <span class="corner tl"></span><span class="corner tr"></span>
         <span class="corner bl"></span><span class="corner br"></span>
+      </div>
+
+      <!-- 虛擬觸控控制（置於影像頁內 → 自動落在狀態列下方，任何螢幕都不重疊；橫向且未接手把才顯示）。
+           左＝相機+錄影（上）＋虛擬左搖桿（下）；右＝燈（上）＋深度垂直搖桿（下）。WS {t:'c',...}。 -->
+      <div id="touch-ctl" class="touch-ctl" hidden>
+        <div class="touch-left">
+          <div class="act-top" aria-label="相機 / 影像串流">
+            <button id="tb-photo" class="tbtn small" aria-label="拍照">📷</button>
+            <button id="tb-rec"   class="tbtn small" aria-label="錄影">⏺</button>
+          </div>
+          <div id="joy" class="joy" aria-label="虛擬左搖桿（前後左右）">
+            <div id="joy-thumb" class="joy-thumb"></div>
+          </div>
+        </div>
+        <div class="touch-right">
+          <button id="tb-light" class="tbtn small" aria-label="燈光">💡</button>
+          <div id="depth-joy" class="depth-joy" aria-label="深度搖桿（上升 / 下潛）">
+            <span class="depth-mark up">▲</span>
+            <div id="depth-thumb" class="depth-thumb"></div>
+            <span class="depth-mark down">▼</span>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -85,6 +107,7 @@
             <button id="btn-clear" class="btn">清除</button>
           </div>
           <button id="btn-cal" class="btn cal-open" title="羅盤校準">🧭 校準</button>
+          <button id="btn-auto" class="btn" title="自動導航（需航點＋GPS 定位才會實際移動）">▶ 啟動自動</button>
         </div>
       </aside>
     </section>

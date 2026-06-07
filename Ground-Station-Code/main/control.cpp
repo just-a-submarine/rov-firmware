@@ -14,6 +14,7 @@ static bool    s_lbLast     = false;
 static bool    s_yLast      = false;
 static bool    s_startLast  = false;
 static bool    s_estop      = false;     // 急停 latch：Start 邊緣觸發切換（再按一次解鎖）
+static int     s_lastL = 0, s_lastR = 0, s_lastV = 0;   // 最近送出的馬達指令（供 Web 狀態列顯示轉速 %）
 
 MotorPair computeDifferential(int lx, int ly) {
     // 1. 正規化至 [-1, 1]；Y 軸反向（搖桿前推 ly 為負 → 前進為正）
@@ -27,10 +28,12 @@ MotorPair computeDifferential(int lx, int ly) {
     // 3. 搖桿大小（速度命令），最大限制 1.0
     float r = fminf(hypotf(x, y), 1.0f);
 
-    // 4. 差速混合（轉向慣例：搖桿左推 x<0 → 左轉 → 右馬達出力 > 左馬達）
-    //    實機實測舊式 (y+x, y-x) 轉向相反，故對調 x 項。
-    float rawLeft  = y - x;
-    float rawRight = y + x;
+    // 4. 差速混合（教科書 arcade 慣例，與 ROV computeNavigation 的 left=fwd+turn 一致）：
+    //    左推 x<0 → rawLeft 變小、rawRight 變大 → 右馬達 > 左馬達 → 左轉。✔ 標準接線
+    //    （2026-05-29 曾因實機看似反向改成 y−x/y+x；2026-06-07 經確認左右馬達未接反、
+    //      且與自動導航慣例不一致 → 改回教科書式。日後若馬達實體左右對調才需再對調。）
+    float rawLeft  = y + x;
+    float rawRight = y - x;
 
     // 5. 歸一化：讓輸出峰值等於搖桿大小 r（保持速度比例正確）
     float peak = fmaxf(fabsf(rawLeft), fabsf(rawRight));
@@ -94,11 +97,16 @@ void readXboxAndSend() {
     pkt.vertMotor     = depth;
     pkt.ledOn         = s_ledState;
     pkt.emergencyStop = s_estop;
-    pkt.autoMode      = false;
+    pkt.autoMode      = gpAuto();          // 手機「啟動自動」開關（WS auto 欄）；ROV 才會跑 computeNavigation
     pkt.streamMode    = s_streamMode;
     pkt.takePhoto     = takePhoto;
     pkt.msgType       = MSG_CONTROL;
+
+    s_lastL = mp.left; s_lastR = mp.right; s_lastV = depth;   // 供遙測回傳給 Web 顯示轉速 %
     sendControl(pkt);
 }
 
 bool controlEstopLatched() { return s_estop; }
+int  controlLastMotorL()   { return s_lastL; }
+int  controlLastMotorR()   { return s_lastR; }
+int  controlLastMotorV()   { return s_lastV; }

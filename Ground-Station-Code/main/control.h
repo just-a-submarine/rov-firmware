@@ -13,3 +13,8 @@ void readXboxAndSend();
 
 // 急停 latch 狀態（供 Web 顯示橫幅）。
 bool controlEstopLatched();
+
+// 最近一次送出的馬達指令（-1023~1023）；供 Web 狀態列顯示左/右/垂直轉速 %。
+int controlLastMotorL();
+int controlLastMotorR();
+int controlLastMotorV();

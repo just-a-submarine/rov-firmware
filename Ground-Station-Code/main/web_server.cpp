@@ -36,6 +36,7 @@ static void onWSEvent(AsyncWebSocket* server, AsyncWebSocketClient* client,
         gamepadSetRemote((int16_t)constrain(lx, -32767, 32767),
                          (int16_t)constrain(ly, -32767, 32767),
                          (int16_t)constrain(ry, -32767, 32767), b);
+        gamepadSetAuto((doc["auto"] | 0) != 0);   // 自動/手動開關（缺欄＝0＝手動）
     }
 }
 
@@ -110,6 +111,9 @@ void broadcastTelemetry(const TelemetryPacket& pkt) {
     doc["photoAck"]   = pkt.photoAck;
     doc["led"]        = pkt.ledOn;               // 潛水艇燈實際狀態（手機狀態列顯示）
     doc["estop"]      = controlEstopLatched();   // 地面站本機急停 latch 狀態
+    doc["ml"]         = controlLastMotorL();     // 左/右/垂直馬達最近指令（-1023~1023）→ 前端轉 %
+    doc["mr"]         = controlLastMotorR();
+    doc["mv"]         = controlLastMotorV();
 
     String out;
     serializeJson(doc, out);

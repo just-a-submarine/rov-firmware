@@ -29,6 +29,10 @@ bool btControllerConnected();// 藍牙已停用，恆為 false（保留供診斷
 // buttons 位元：bit0=A,1=B,2=X,3=Y,4=LB,5=RB,6=Start,7=Back（對應 GpButton 順序）。
 void gamepadSetRemote(int16_t lx, int16_t ly, int16_t ry, uint16_t buttons);
 
+// 手機「自動/手動」開關（WS auto 欄）。gpAuto() 在控制新鮮時才回 true（斷線→自動關閉）。
+void gamepadSetAuto(bool autoMode);
+bool gpAuto();
+
 int16_t gpAxisLX();          // 左搖桿 X（右 = +）
 int16_t gpAxisLY();          // 左搖桿 Y（前推 = -）
 int16_t gpAxisRY();          // 右搖桿 Y（前推 = -）

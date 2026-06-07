@@ -177,6 +177,8 @@ body {
 .content { flex: 1 1 auto; position: relative; min-height: 0; display: flex; }
 .pane { display: none; flex: 1 1 auto; min-height: 0; }
 .pane.active { display: flex; flex-direction: column; }
+/* 影像頁設 relative：虛擬觸控控制改放它裡面（絕對定位 inset:0）→ 永遠落在狀態列下方，任何螢幕都不重疊 */
+#pane-video { position: relative; }
 
 /* ---------- 影像 ---------- */
 .video-wrap {
@@ -197,27 +199,9 @@ body {
   background:
     repeating-linear-gradient(45deg, #060b14, #060b14 14px, #0a111d 14px, #0a111d 28px);
 }
-.badge {
-  position: absolute; top: 10px; right: 10px;
-  padding: 4px 10px; border-radius: 6px;
-  font-size: 11px; font-weight: 800; letter-spacing: 1px;
-  color: #04121a; background: var(--cyan);
-  box-shadow: 0 0 10px rgba(34,211,238,.5);
-}
-/* 影像顯示比例切換鈕（符合 / 填滿 / 拉伸）*/
-.fit-btn {
-  position: absolute; bottom: 10px; right: 10px;
-  padding: 5px 11px; border-radius: 6px;
-  border: 1px solid var(--line);
-  background: rgba(5,8,15,.6); color: var(--cyan);
-  font-size: 12px; font-weight: 700; letter-spacing: 1px;
-  cursor: pointer; z-index: 6;
-  -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
-}
-.fit-btn:active { transform: scale(.95); }
+/* 串流狀態（純串流/錄影中）已移到狀態列遙測格 #stream-mode-badge（`.tval`），不再浮在影像上。 */
+/* 影像一律用原始比例（object-fit: contain，不拉伸）→ 橫向時兩側自然留黑邊放控制 */
 .video-wrap img.fit-contain { object-fit: contain; }
-.video-wrap img.fit-cover   { object-fit: cover; }
-.video-wrap img.fit-fill    { object-fit: fill; }
 
 /* HUD 角框 */
 .corner { position: absolute; width: 18px; height: 18px; border: 2px solid var(--cyan); opacity: .55; pointer-events: none; }
@@ -232,6 +216,78 @@ body {
   border: 1px solid var(--line);
   font-size: 15px; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 50;
 }
+
+/* ---------- 虛擬觸控控制（橫向、無實體手把時；置於影像頁內 → inset:0 只蓋影像區、不蓋 HUD）---------- */
+.touch-ctl { position: absolute; inset: 0; z-index: 40; pointer-events: none; }
+.touch-ctl[hidden] { display: none; }
+.touch-ctl > * { pointer-events: auto; }
+/* 直向無左右留白 → 一律隱藏（避免蓋住影像）；橫向才用左右剩餘空間擺搖桿 */
+@media (orientation: portrait) { .touch-ctl { display: none !important; } }
+
+/* 左黑邊：相機+錄影貼上緣（往上）、虛擬左搖桿貼下緣 → space-between 把兩者拉開 */
+.touch-left {
+  position: absolute; left: 18px; top: 12px; bottom: 14px;
+  display: flex; flex-direction: column; align-items: center; justify-content: space-between;
+}
+.joy {
+  position: relative;
+  width: 146px; height: 146px; border-radius: 50%;   /* 較原 132 大 ~10% */
+  background: radial-gradient(circle, rgba(34,211,238,.12), rgba(5,8,15,.5));
+  border: 2px solid rgba(34,211,238,.45);
+  box-shadow: 0 0 16px rgba(34,211,238,.18);
+  touch-action: none; -webkit-user-select: none; user-select: none;
+}
+.joy-thumb {
+  position: absolute; left: 50%; top: 50%;
+  width: 64px; height: 64px; margin: -32px 0 0 -32px; border-radius: 50%;
+  background: rgba(34,211,238,.85); border: 2px solid #04121a;
+  box-shadow: 0 0 12px rgba(34,211,238,.6);
+  transition: transform .04s linear;
+}
+
+/* 右黑邊：燈貼上緣（往上）＋ 深度垂直搖桿貼下緣（略往左）→ space-between 拉開 */
+.touch-right {
+  position: absolute; right: 30px; top: 12px; bottom: 12px;
+  display: flex; flex-direction: column; align-items: center; justify-content: space-between;
+}
+.act-top { display: flex; flex-direction: row; gap: 12px; }   /* 相機 + 影像串流 並排 */
+
+/* 深度垂直搖桿：上下挪動 → ry（比例＝升降轉速/強度），放開彈回中心歸零 */
+.depth-joy {
+  position: relative; width: 62px; height: 150px; border-radius: 31px;
+  background: radial-gradient(circle, rgba(34,211,238,.10), rgba(5,8,15,.5));
+  border: 2px solid rgba(34,211,238,.45);
+  box-shadow: 0 0 14px rgba(34,211,238,.16);
+  touch-action: none; -webkit-user-select: none; user-select: none;
+}
+.depth-thumb {
+  position: absolute; left: 50%; top: 50%;
+  width: 50px; height: 50px; margin: -25px 0 0 -25px; border-radius: 50%;
+  background: rgba(34,211,238,.85); border: 2px solid #04121a;
+  box-shadow: 0 0 12px rgba(34,211,238,.6);
+  transition: transform .04s linear;
+}
+.depth-mark {
+  position: absolute; left: 0; right: 0; text-align: center;
+  color: rgba(34,211,238,.55); font-size: 13px; font-weight: 800; pointer-events: none;
+}
+.depth-mark.up   { top: 6px; }
+.depth-mark.down { bottom: 6px; }
+
+.tbtn {
+  width: 64px; height: 64px; border-radius: 50%;
+  border: 2px solid rgba(34,211,238,.45);
+  background: rgba(5,8,15,.55); color: var(--cyan);
+  font-size: 23px; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; touch-action: none; -webkit-user-select: none; user-select: none;
+  -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+  /* 按下→開啟態(黃) 平順過渡；不再閃青色背景（只縮放回饋），視覺更順 */
+  transition: background .15s ease, border-color .15s ease, color .15s ease, transform .08s ease;
+}
+.tbtn.small { width: 52px; height: 52px; font-size: 19px; }   /* 燈/拍照/錄影 縮小 */
+.tbtn.active { transform: scale(.9); }                         /* 按壓只縮放，無青色閃爍 */
+.tbtn.on { background: var(--amber); border-color: var(--amber); color: #1a1304; }   /* 燈/錄影開啟態 */
 
 /* ---------- 地圖 / 航點 ---------- */
 /* 航點頁＝左地圖 + 右窄側邊欄（覆寫 .pane.active 的 column）；relative 供 wp-hint 浮層定位 */
@@ -338,21 +394,33 @@ body {
 }
 .leaflet-bar { box-shadow: 0 0 10px rgba(0,0,0,.6); }
 
-/* ===== 橫向手機：壓扁 HUD（不蓋影像）、遙測單列；分頁在頂列「手動模式」右側 ===== */
+/* ===== 橫向（所有尺寸，含電腦版）：影像縮中央、兩側黑邊放控制 =====
+   不再限 max-height:600 → 桌機/平板也保證有足夠黑邊容下控制（避免控制蓋到影像）。 */
+@media (orientation: landscape) {
+  :root { --gutter: 168px; }
+  .video-wrap { padding-left: var(--gutter); padding-right: var(--gutter); }
+  /* 角框、佔位條紋內縮到中央影像框，不畫進黑邊/不蓋控制 */
+  .video-wrap .corner.tl, .video-wrap .corner.bl { left:  calc(var(--gutter) + 6px); }
+  .video-wrap .corner.tr, .video-wrap .corner.br { right: calc(var(--gutter) + 6px); }
+  .stream-ph { left: var(--gutter); right: var(--gutter); }
+}
+
+/* ===== 橫向「矮」螢幕（手機）：壓扁 HUD、遙測單列；分頁在頂列「手動模式」右側 ===== */
 @media (orientation: landscape) and (max-height: 600px) {
-  /* HUD 維持正常排版（不浮層、不蓋影像與「純串流」徽章），只壓低高度 */
+  /* HUD 維持正常排版（不浮層、不蓋影像），只壓低高度 */
   .hud-top { flex-wrap: nowrap; padding: 4px 8px; gap: 6px; }
   .mode { font-size: 12px; letter-spacing: 1px; }
   .fs-btn { width: 26px; height: 26px; font-size: 13px; }
   .tab { padding: 5px 14px; font-size: 12px; }
 
-  /* 遙測壓成單列（不換行）：數值等寬、座標稍寬、字級縮小讓座標塞得下 */
+  /* 遙測壓成單列（不換行）：等寬、馬達/燈格收窄，10 格也塞得下 */
   .telemetry { flex-wrap: nowrap; }
-  .telemetry .tcell { min-width: 0; flex: 1 1 0; padding: 3px 8px; }
-  .telemetry .tcell.wide { flex: 2 1 0; }          /* 座標較寬，避免截斷 */
-  .telemetry .tcell.led  { flex: 0.55 1 0; }       /* 燈只顯示 開/關，收窄 */
+  .telemetry .tcell { min-width: 0; flex: 1 1 0; padding: 3px 5px; }
+  .telemetry .tcell.led  { flex: 0.5 1 0; }        /* 燈只顯示 開/關，收窄 */
+  .telemetry .tcell.mtr  { flex: 0.72 1 0; }       /* 馬達轉速格收窄 */
   .tval { font-size: 13px; }
   .tval.small { font-size: 11px; }
+  .tlabel { letter-spacing: 0; }
   .rssi-warn { display: none; }                    /* 省一列：靠訊號數值與顏色判讀 */
 }
 

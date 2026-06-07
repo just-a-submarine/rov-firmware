@@ -13,6 +13,7 @@
 // ---- 遙控狀態（由 web_server 收 WS 控制封包後餵入）----
 static int16_t  s_lx = 0, s_ly = 0, s_ry = 0;
 static uint16_t s_btns  = 0;
+static bool     s_auto  = false;     // 手機「啟動自動」開關（WS auto 欄）
 static uint32_t s_lastMs = 0;
 
 static inline bool ctrlFresh() {
@@ -23,6 +24,9 @@ void gamepadSetRemote(int16_t lx, int16_t ly, int16_t ry, uint16_t buttons) {
     s_lx = lx; s_ly = ly; s_ry = ry; s_btns = buttons;
     s_lastMs = millis();
 }
+
+void gamepadSetAuto(bool autoMode) { s_auto = autoMode; }
+bool gpAuto() { return ctrlFresh() && s_auto; }   // 控制斷線即自動關閉（failsafe）
 
 // 藍牙已停用，恆為 false（保留供診斷列印用）。
 bool btControllerConnected() { return false; }
