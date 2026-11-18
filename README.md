@@ -7,7 +7,7 @@
 - **手機操作網頁** — 由地面站提供，顯示遙測/地圖/影像、設定航點。
 
 > 同一個倉庫包含**兩個獨立的 ESP32-S3 韌體子專案**（潛水艇、地面站），
-> 建置框架不同，請勿混淆。動手前先讀 [`CLAUDE.md`](CLAUDE.md) 與對應子專案的 `CONTEXT.md`。
+> 建置框架不同，請勿混淆。動手前先讀 [`CLAUDE.md`](CLAUDE.md) 與 [`tasks/todo.md`](tasks/todo.md) 對應小節。
 
 ---
 
@@ -46,10 +46,9 @@
 │   └── 06-控制與導航.md
 ├── CLAUDE.md                專案總覽 + 文件維護規範（AI/開發者進入點）
 ├── README.md                本檔
+├── tasks/                   todo.md 交接與待辦（兩端）、lessons.md 踩雷教訓
 ├── Submarine-Code/          🟦 潛水艇 (ROV) 韌體 — PlatformIO + pioarduino (Arduino core 3.x)
-│   └── CONTEXT.md           開發交接文件（潛水艇）
 └── Ground-Station-Code/     🟩 地面站韌體 + 手機網頁 — PlatformIO + ESP-IDF + Bluepad32
-    └── CONTEXT.md           開發交接文件（地面站）
 ```
 
 ---
@@ -109,4 +108,4 @@ pio run -e groundstation -t uploadfs      # 上傳網頁（韌體與網頁兩者
   手機網頁含虛擬搖桿（無手把也能操控）、離線地圖、影像 contain 比例。
   GS AP MAC 由韌體釘死（換板免改 ROV）。ESP-NOW 遙測已通。待實機：手把配對到手機整體操控、馬達整合。
 
-詳細進度見各子專案 `CONTEXT.md`。
+詳細進度與待辦見 [`tasks/todo.md`](tasks/todo.md)。

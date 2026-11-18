@@ -4,7 +4,7 @@
 **手機操作網頁**（網頁由地面站 LittleFS 提供）。本檔是給 AI Agent / 開發者的進入點。
 
 > 🚨 **潛水艇與地面站是兩個獨立子專案，建置框架不同，切勿混淆。**
-> 動手前先確認你在哪一邊（看路徑、看 `platformio.ini`），再讀對應的 `CONTEXT.md`。
+> 動手前先確認你在哪一邊（看路徑、看 `platformio.ini`），再讀 `tasks/todo.md` 對應小節。
 
 ---
 
@@ -13,8 +13,8 @@
 | 路徑 | 角色 | 維護檔 |
 |------|------|--------|
 | `doc/` | **共用設計規格（參考資料）**，描述整套系統（潛水艇 + 地面站 + 網頁） | `03`~`06`（見下） |
-| `Submarine-Code/` | **潛水艇 (ROV)** 韌體 | `Submarine-Code/CONTEXT.md` |
-| `Ground-Station-Code/` | **地面站** 韌體 + 手機網頁（`data/www/`） | `Ground-Station-Code/CONTEXT.md` |
+| `Submarine-Code/` | **潛水艇 (ROV)** 韌體 | `tasks/todo.md`（潛水艇小節） |
+| `Ground-Station-Code/` | **地面站** 韌體 + 手機網頁（`data/www/`） | `tasks/todo.md`（地面站小節） |
 | `CLAUDE.md` | 本檔，專案總覽與維護規範 | — |
 
 根目錄**只保留 `doc/` 與本 `CLAUDE.md`**；其餘皆在兩個子專案內。
@@ -36,7 +36,7 @@
 - env：`goouuu_esp32s3cam`（正式，純 STA 連地面站）、`standalone`（單機測試，自開 AP `ROV_TEST`）。
 - 偵錯/燒錄：正式版用 **原生 USB COM6**（`ENABLE_GPS=1` 時 CH340 COM4 失效）。
 - 職責：馬達控制、感測器（羅盤/深度/電流/GPS）、MJPEG 串流 + SD 錄影、ESP-NOW 收發、導航/PID。
-- 細節見 `Submarine-Code/CONTEXT.md`。
+- 細節見 `tasks/todo.md` 潛水艇小節。
 
 ### 🟩 地面站 — `Ground-Station-Code/`
 - 板 `esp32-s3-devkitc-1`。
@@ -47,7 +47,7 @@
   **控制來源＝手機**：手把有線(USB)連手機 → 手機網頁 Gamepad API → WS → 地面站；**Bluepad32/BTstack 已完全停用**
   （`main.c` 不跑 btstack/uni_init、BT RAM 已釋放）。控制走手機 Gamepad API/虛擬搖桿→WS。
   **不碰影像**（手機 `<img>` 直連 ROV `192.168.4.100`）。
-- 細節見 `Ground-Station-Code/CONTEXT.md`。
+- 細節見 `tasks/todo.md` 地面站小節。
 
 ### 兩端協同
 - ESP-NOW 雙向：地面站送控制/航點、收遙測。MAC 已互填
@@ -62,16 +62,16 @@
 1. **`doc/` 是參考資料（設計規格），要及時更新對齊最新狀況。**
    修改後更新該檔頁尾「文件版本 / 最後更新」並註明改動。`doc` 為潛水艇與地面站共用，
    改動前確認影響的是哪一端或兩端。
-2. **實作刻意偏離 `doc/` 時，不一定改 doc，而是記到該子專案 `CONTEXT.md` 的「與文件的差異」**
+2. **實作刻意偏離 `doc/` 時，不一定改 doc，而是記到 `tasks/todo.md` 該子專案小節的「與 doc 刻意差異」**
     （例：地面站手把由有線 USB 改為有線連接手機、控制走手機 Gamepad→WS、改 ESP-IDF；潛水艇 MJPEG 改 `esp_http_server`）。
    doc 內明確錯誤（如腳位筆誤）則直接修 doc 並升版。
-3. **`CONTEXT.md` 兩份各自獨立維護**：潛水艇放潛水艇的、地面站放地面站的，不要互相污染。
-   每次任務完成後更新對應 `CONTEXT.md`（硬體/MAC/COM 埠/待辦/驗證進度/踩坑）。
+3. **交接寫在 `tasks/todo.md`（≤100 行）**：潛水艇、地面站、兩端共通各放各的小節，不要互相污染。
+   每次任務完成後更新對應小節（硬體/MAC/COM 埠/待辦/驗證進度/踩坑），過時內容刪除。
 4. **本 `CLAUDE.md` 也要維護**：路徑、框架、env、子專案職責有變時同步更新。
 
 ## 動手前檢查清單
 - [ ] 我在潛水艇還是地面站？（看路徑與 `platformio.ini`）
-- [ ] 已讀對應 `CONTEXT.md` 與相關 `doc/`？
+- [ ] 已讀 `tasks/todo.md` 對應小節與相關 `doc/`？
 - [ ] 改到通訊封包了嗎？兩端 `packets.h` 是否仍逐位元組一致？
 - [ ] 地面站建置：是否用原生 PowerShell？env 是否帶 `-e groundstation`？
-- [ ] 完成後是否更新了 `CONTEXT.md` / 視情況更新 `doc/` 與本檔？
+- [ ] 完成後是否更新了 `tasks/todo.md` / 視情況更新 `doc/` 與本檔？

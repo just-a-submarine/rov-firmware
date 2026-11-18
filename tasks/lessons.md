@@ -203,7 +203,7 @@
   **flash −360KB**（linker 把不再被引用的 BTstack/Bluepad32 GC 掉）。→ 印證「BT 真的沒被連進來」。
 - **方法論**：① 改「停用某子系統」前，先確認**它是被誰、在哪一層初始化的**（看開機 log 的相對順序最快）；
   別假設「不呼叫某個 high-level setup 就等於關掉」。② 框架/範本常在 `app_main` 偷塞 init——進入點檔（`main.c`）
-  才是真戰場。③ CONTEXT.md 舊敘述（「不可跳過 BT init 否則 loop 不跑」）是錯的假設，已順手更正——
+  才是真戰場。③ 交接文件舊敘述（「不可跳過 BT init 否則 loop 不跑」）是錯的假設，已順手更正——
   **舊文件的推測也要被實測打臉時更新**。
 
 ## 2026-05-30（五，第二批）— 相機壞狀態的真正極限 + 序列埠開埠會重置 S3
@@ -339,7 +339,7 @@
 - **espidf 專案別加 `platformio.ini` build_flags**：會誘發同一個 utils.c.o 撞名；
   要編譯期宏就寫進原始碼/`diag.h` 或 CMake `target_compile_definitions`。
 - **MAX_PATH(260)**：libsodium 深層檔名超界，`ar.exe` 報 `No such file`。短雜湊 obj 路徑可一併解掉。
-- **builder 修補在 `~/.platformio`（不在 repo）**：重裝平台/換機要重套，否則乾淨建置壞。詳見 GS `CONTEXT.md`。
+- **builder 修補在 `~/.platformio`（不在 repo）**：重裝平台/換機要重套，否則乾淨建置壞。詳見 `tasks/todo.md` 地面站小節。
 
 ### 序列埠 / 偵錯
 - **原生 USB-CDC（潛水艇 COM6）**：pyserial 開埠時 DTR/RTS 重置會 re-enumerate，常誤入下載模式，
